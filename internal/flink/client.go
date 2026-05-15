@@ -423,6 +423,14 @@ func summarizeDorisSinkMetrics(samples []DorisSinkMetricsSample) DorisSinkMetric
 	summary.WriteDataTimeMsMean = mean(writeMeans)
 	summary.BeginTxnTimeMsMean = mean(beginMeans)
 	summary.CommitAndPublishTimeMsMean = mean(commitMeans)
+	summary.PerFlushMiBMean = round3(summary.PerFlushBytesMean / 1024 / 1024)
+	summary.LoadTimeSecMean = round3(summary.LoadTimeMsMean / 1000)
+	summary.LoadTimeSecMax = round3(summary.LoadTimeMsMax / 1000)
+	summary.WriteDataTimeSecMean = round3(summary.WriteDataTimeMsMean / 1000)
+	summary.WriteDataTimeSecMax = round3(summary.WriteDataTimeMsMax / 1000)
+	if summary.LoadTimeSecMean > 0 {
+		summary.LoadMiBPerSecPerSubtask = round3(summary.PerFlushMiBMean / summary.LoadTimeSecMean)
+	}
 	return summary
 }
 

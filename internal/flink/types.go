@@ -75,10 +75,16 @@ type DorisSinkMetricsSummary struct {
 	FlushFailedTotal           float64 `json:"flush_failed_total,omitempty"`
 	PerFlushRowsMean           float64 `json:"per_flush_rows_mean,omitempty"`
 	PerFlushBytesMean          float64 `json:"per_flush_bytes_mean,omitempty"`
+	PerFlushMiBMean            float64 `json:"per_flush_mib_mean,omitempty"`
 	LoadTimeMsMean             float64 `json:"load_time_ms_mean,omitempty"`
 	LoadTimeMsMax              float64 `json:"load_time_ms_max,omitempty"`
+	LoadTimeSecMean            float64 `json:"load_time_sec_mean,omitempty"`
+	LoadTimeSecMax             float64 `json:"load_time_sec_max,omitempty"`
 	WriteDataTimeMsMean        float64 `json:"write_data_time_ms_mean,omitempty"`
 	WriteDataTimeMsMax         float64 `json:"write_data_time_ms_max,omitempty"`
+	WriteDataTimeSecMean       float64 `json:"write_data_time_sec_mean,omitempty"`
+	WriteDataTimeSecMax        float64 `json:"write_data_time_sec_max,omitempty"`
+	LoadMiBPerSecPerSubtask    float64 `json:"load_mib_per_sec_per_subtask,omitempty"`
 	BeginTxnTimeMsMean         float64 `json:"begin_txn_time_ms_mean,omitempty"`
 	CommitAndPublishTimeMsMean float64 `json:"commit_and_publish_time_ms_mean,omitempty"`
 }

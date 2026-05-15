@@ -4,8 +4,11 @@ import (
 	"fmt"
 	"net/url"
 	"path"
+	"regexp"
 	"strings"
 )
+
+var flinkJobIDPattern = regexp.MustCompile(`(?i)^[0-9a-f]{32}$`)
 
 type BaseURL struct {
 	u *url.URL
@@ -54,4 +57,39 @@ func (b BaseURL) Endpoint(apiPath string) string {
 		u.Path = path.Join(u.Path, cleanAPI)
 	}
 	return u.String()
+}
+
+func ExtractJobIDFromWebURL(raw string) string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return ""
+	}
+	if !strings.Contains(raw, "://") {
+		raw = "http://" + raw
+	}
+	u, err := url.Parse(raw)
+	if err != nil {
+		return ""
+	}
+	for _, part := range splitRoute(u.Fragment) {
+		if flinkJobIDPattern.MatchString(part) {
+			return part
+		}
+	}
+	for _, part := range splitRoute(u.Path) {
+		if flinkJobIDPattern.MatchString(part) {
+			return part
+		}
+	}
+	return ""
+}
+
+func splitRoute(route string) []string {
+	route = strings.Trim(route, "/")
+	if route == "" {
+		return nil
+	}
+	return strings.FieldsFunc(route, func(r rune) bool {
+		return r == '/' || r == '#'
+	})
 }

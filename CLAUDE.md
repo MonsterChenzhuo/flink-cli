@@ -29,6 +29,7 @@ URL 规范化规则：
 - 去掉 query、fragment 和末尾 `/`。
 - 保留 gateway/proxy path，再拼接 REST path。
 - 例如 `http://gateway/proxy/application_1/` 会请求 `http://gateway/proxy/application_1/jobs/overview`。
+- 如果用户传入 Web UI 作业页完整 URL，例如 `#/job/running/<jobId>/overview`，CLI 会自动从 fragment 里提取 job id，相当于补上 `--job-id <jobId>`。
 - 内网 HTTPS YARN/Flink 网关如果使用自签名或非标准证书，使用 `--insecure-skip-verify`。这是显式开关，不默认跳过证书校验。
 - 真实回归 URL 形态示例：`https://110.238.78.142:9022/component/Yarn/ResourceManager/36/proxy/application_1777980975440_135435/`，需要保留 `/component/Yarn/ResourceManager/.../proxy/application_...` 这段 path。
 
@@ -112,7 +113,7 @@ stderr 输出 JSON error：
 - `vertex_failed`：vertex 处于 failed/canceled/canceling。
 - `backpressure_high`：vertex backpressure level 为 high。
 - `sink_busy_upstream_backpressure`：sink 自身 backpressure 可能是 ok，但 sink busy 较高且上游 vertex 已累计反压。这个规则用于 Doris Writer 这类场景，避免 agent 被 “Writer backpressure=ok” 误导；应继续检查外部系统吞吐、sink flush/load/commit 指标、批次大小、checkpoint 周期和 sink 并发。
-  - 如果命中 Doris Writer，`finding.evidence.doris_sink_metrics.summary` 会包含采样 subtask 的 `per_flush_rows_mean`、`per_flush_bytes_mean`、`load_time_ms_mean/max`、`write_data_time_ms_mean/max`、`begin_txn_time_ms_mean`、`commit_and_publish_time_ms_mean`。
+  - 如果命中 Doris Writer，`finding.evidence.doris_sink_metrics.summary` 会包含采样 subtask 的 `per_flush_rows_mean`、`per_flush_bytes_mean`、`per_flush_mib_mean`、`load_time_ms_mean/max`、`load_time_sec_mean/max`、`write_data_time_ms_mean/max`、`write_data_time_sec_mean/max`、`load_mib_per_sec_per_subtask`、`begin_txn_time_ms_mean`、`commit_and_publish_time_ms_mean`。
 - `no_obvious_issue`：没有命中明显异常时输出 ok finding。
 
 后续扩展规则时，先加测试，再实现。避免只凭字段存在就输出高置信度结论；`severity` 表示诊断置信度，不等于优化 ROI。

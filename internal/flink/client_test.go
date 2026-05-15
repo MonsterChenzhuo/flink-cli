@@ -32,6 +32,13 @@ func TestNormalizeBaseURLDefaultsHTTPForHostPort(t *testing.T) {
 	}
 }
 
+func TestExtractJobIDFromWebURLFragment(t *testing.T) {
+	raw := "https://gateway/proxy/application_1/#/job/running/29dff7365a0c1823af622b38eeb2bd96/overview"
+	if got, want := ExtractJobIDFromWebURL(raw), "29dff7365a0c1823af622b38eeb2bd96"; got != want {
+		t.Fatalf("ExtractJobIDFromWebURL = %q, want %q", got, want)
+	}
+}
+
 func TestClientCollectsJobSnapshot(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/flink/jobs/overview", func(w http.ResponseWriter, r *http.Request) {
@@ -315,5 +322,14 @@ func TestClientSamplesDorisSinkMetrics(t *testing.T) {
 	}
 	if got.Summary.WriteDataTimeMsMax != 109000 {
 		t.Fatalf("WriteDataTimeMsMax = %v, want 109000", got.Summary.WriteDataTimeMsMax)
+	}
+	if got.Summary.PerFlushMiBMean != 500.679 {
+		t.Fatalf("PerFlushMiBMean = %v, want 500.679", got.Summary.PerFlushMiBMean)
+	}
+	if got.Summary.LoadTimeSecMean != 91.25 {
+		t.Fatalf("LoadTimeSecMean = %v, want 91.25", got.Summary.LoadTimeSecMean)
+	}
+	if got.Summary.LoadMiBPerSecPerSubtask != 5.487 {
+		t.Fatalf("LoadMiBPerSecPerSubtask = %v, want 5.487", got.Summary.LoadMiBPerSecPerSubtask)
 	}
 }

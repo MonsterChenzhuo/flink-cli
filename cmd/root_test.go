@@ -181,6 +181,33 @@ func TestDiagnoseCommandPassesJobIDFilter(t *testing.T) {
 	}
 }
 
+func TestDiagnoseCommandInfersJobIDFromWebUIFragment(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/proxy/application_1/jobs/overview", func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"jobs":[{"jid":"job-1","name":"skip","state":"RUNNING"},{"jid":"29dff7365a0c1823af622b38eeb2bd96","name":"target","state":"RUNNING"}]}`))
+	})
+	mux.HandleFunc("/proxy/application_1/jobs/29dff7365a0c1823af622b38eeb2bd96", func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"jid":"29dff7365a0c1823af622b38eeb2bd96","name":"target","state":"RUNNING","vertices":[]}`))
+	})
+	server := httptest.NewServer(mux)
+	defer server.Close()
+
+	rawURL := server.URL + "/proxy/application_1/#/job/running/29dff7365a0c1823af622b38eeb2bd96/overview"
+	var stdout, stderr bytes.Buffer
+	rc := RunWith(context.Background(), []string{"diagnose", rawURL}, &stdout, &stderr)
+	if rc != 0 {
+		t.Fatalf("RunWith rc = %d, stderr = %s", rc, stderr.String())
+	}
+	var env map[string]any
+	if err := json.Unmarshal(stdout.Bytes(), &env); err != nil {
+		t.Fatalf("stdout is not JSON: %v\n%s", err, stdout.String())
+	}
+	summary := env["summary"].(map[string]any)
+	if got, want := summary["total_jobs"], float64(1); got != want {
+		t.Fatalf("total_jobs = %v, want %v", got, want)
+	}
+}
+
 func TestDiagnoseCommandReturnsUserErrorWhenJobIDMissing(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/jobs/overview", func(w http.ResponseWriter, r *http.Request) {

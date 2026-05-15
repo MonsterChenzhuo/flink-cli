@@ -120,6 +120,9 @@ func RunWith(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 }
 
 func runDiagnose(ctx context.Context, rawURL string, st state, stdout, stderr io.Writer) int {
+	if st.jobID == "" {
+		st.jobID = flink.ExtractJobIDFromWebURL(rawURL)
+	}
 	client, err := flink.NewClientWithHTTP(rawURL, newHTTPClient(st.timeout, st.insecureTLS))
 	if err != nil {
 		apperr.WriteJSON(stderr, apperr.New("URL_INVALID", err.Error(), "传入完整的 Flink Web UI URL，例如 http://jobmanager:8081 或带 gateway path 的代理地址"))

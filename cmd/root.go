@@ -42,13 +42,17 @@ type envelope struct {
 }
 
 type state struct {
-	timeout         time.Duration
-	includeSnapshot bool
-	jobID           string
-	maxVertices     int
-	listJobs        bool
-	quietWarnings   bool
-	insecureTLS     bool
+	timeout          time.Duration
+	includeSnapshot  bool
+	jobID            string
+	taskManagerID    string
+	maxVertices      int
+	listJobs         bool
+	listTaskManagers bool
+	quietWarnings    bool
+	insecureTLS      bool
+	includeThreads   bool
+	maxThreads       int
 }
 
 type listJobsEnvelope struct {
@@ -59,6 +63,19 @@ type listJobsEnvelope struct {
 	SourceEndpoints []string            `json:"source_endpoints"`
 	Jobs            []flink.JobOverview `json:"jobs"`
 	NextActions     []string            `json:"next_actions"`
+}
+
+type threadDumpEnvelope struct {
+	SchemaVersion   string                      `json:"schema_version"`
+	Scenario        string                      `json:"scenario"`
+	UIURL           string                      `json:"ui_url"`
+	ElapsedMs       int64                       `json:"elapsed_ms"`
+	SourceEndpoints []string                    `json:"source_endpoints"`
+	TaskManagerID   string                      `json:"taskmanager_id,omitempty"`
+	TaskManagers    []flink.TaskManagerOverview `json:"taskmanagers,omitempty"`
+	Summary         *flink.ThreadDumpSummary    `json:"summary,omitempty"`
+	ThreadInfos     []flink.ThreadInfo          `json:"thread_infos,omitempty"`
+	NextActions     []string                    `json:"next_actions"`
 }
 
 func newRootCmd() *cobra.Command {
@@ -73,6 +90,7 @@ func newRootCmd() *cobra.Command {
 	root.SetVersionTemplate("flink-cli {{.Version}}\n")
 	root.PersistentFlags().DurationVar(&st.timeout, "timeout", 30*time.Second, "HTTP timeout for Flink REST API calls")
 	root.AddCommand(newDiagnoseCmd(st))
+	root.AddCommand(newThreadDumpCmd(st))
 	root.AddCommand(newVersionCmd())
 	return root
 }
@@ -93,6 +111,24 @@ func newDiagnoseCmd(st *state) *cobra.Command {
 	c.Flags().BoolVar(&st.insecureTLS, "insecure-skip-verify", false, "skip HTTPS server certificate verification for internal YARN/Flink gateways")
 	c.Flags().StringVar(&st.jobID, "job-id", "", "diagnose only the matching Flink job id from /jobs/overview")
 	c.Flags().IntVar(&st.maxVertices, "max-vertices", 20, "maximum vertices per job to query for backpressure; 0 means no limit")
+	return c
+}
+
+func newThreadDumpCmd(st *state) *cobra.Command {
+	c := &cobra.Command{
+		Use:   "thread-dump <flink-web-ui-url>",
+		Short: "Collect a TaskManager thread dump and emit compact JSON.",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			exitCode = runThreadDump(cmd.Context(), args[0], *st, cmd.OutOrStdout(), cmd.ErrOrStderr())
+			return nil
+		},
+	}
+	c.Flags().BoolVar(&st.insecureTLS, "insecure-skip-verify", false, "skip HTTPS server certificate verification for internal YARN/Flink gateways")
+	c.Flags().BoolVar(&st.listTaskManagers, "list-taskmanagers", false, "only list TaskManagers without fetching a thread dump")
+	c.Flags().BoolVar(&st.includeThreads, "include-threads", false, "include full thread dump entries in stdout")
+	c.Flags().StringVar(&st.taskManagerID, "taskmanager-id", "", "TaskManager id from /taskmanagers; inferred from #/task-manager/<id>/thread-dump URLs when omitted")
+	c.Flags().IntVar(&st.maxThreads, "max-threads", 20, "maximum interesting thread summaries to include")
 	return c
 }
 
@@ -160,6 +196,71 @@ func runDiagnose(ctx context.Context, rawURL string, st state, stdout, stderr io
 		env.Snapshot = &report.Snapshot
 	}
 	attachWarnings(&env, snapshot.Warnings, st.quietWarnings)
+	if err := output.WriteJSON(stdout, env); err != nil {
+		apperr.WriteJSON(stderr, apperr.New("OUTPUT_ERROR", err.Error(), "检查 stdout 是否可写"))
+		return 1
+	}
+	return 0
+}
+
+func runThreadDump(ctx context.Context, rawURL string, st state, stdout, stderr io.Writer) int {
+	if st.taskManagerID == "" {
+		st.taskManagerID = flink.ExtractTaskManagerIDFromWebURL(rawURL)
+	}
+	client, err := flink.NewClientWithHTTP(rawURL, newHTTPClient(st.timeout, st.insecureTLS))
+	if err != nil {
+		apperr.WriteJSON(stderr, apperr.New("URL_INVALID", err.Error(), "传入完整的 Flink Web UI URL，例如 http://jobmanager:8081 或带 gateway path 的代理地址"))
+		return 2
+	}
+	start := time.Now()
+	if st.listTaskManagers || st.taskManagerID == "" {
+		taskManagers, err := client.ListTaskManagers(ctx)
+		if err != nil {
+			apperr.WriteJSON(stderr, apperr.New("FLINK_API_UNREACHABLE", err.Error(), "确认 URL 可访问，并且 /taskmanagers 可读取；如果错误包含 x509 或 certificate，可重试加 --insecure-skip-verify"))
+			return 3
+		}
+		base, _ := flink.NormalizeBaseURL(rawURL)
+		env := threadDumpEnvelope{
+			SchemaVersion:   "v1",
+			Scenario:        "thread-dump-list-taskmanagers",
+			UIURL:           base.String(),
+			ElapsedMs:       time.Since(start).Milliseconds(),
+			SourceEndpoints: []string{"/taskmanagers"},
+			TaskManagers:    taskManagers,
+			NextActions: []string{
+				"选择 taskmanagers[].id 后执行：flink-cli thread-dump --taskmanager-id <id> <url>。",
+				"如果 URL 已经是 #/task-manager/<id>/thread-dump 页面，可直接传完整 URL 给 flink-cli thread-dump。",
+			},
+		}
+		if err := output.WriteJSON(stdout, env); err != nil {
+			apperr.WriteJSON(stderr, apperr.New("OUTPUT_ERROR", err.Error(), "检查 stdout 是否可写"))
+			return 1
+		}
+		return 0
+	}
+	dump, err := client.GetThreadDump(ctx, st.taskManagerID)
+	if err != nil {
+		apperr.WriteJSON(stderr, apperr.New("FLINK_API_UNREACHABLE", err.Error(), "确认 TaskManager id 存在，并且 /taskmanagers/<id>/thread-dump 可读取；如果错误包含 x509 或 certificate，可重试加 --insecure-skip-verify"))
+		return 3
+	}
+	base, _ := flink.NormalizeBaseURL(rawURL)
+	summary := flink.SummarizeThreadDump(dump, st.maxThreads)
+	env := threadDumpEnvelope{
+		SchemaVersion:   "v1",
+		Scenario:        "thread-dump",
+		UIURL:           base.String(),
+		ElapsedMs:       time.Since(start).Milliseconds(),
+		SourceEndpoints: []string{"/taskmanagers/" + st.taskManagerID + "/thread-dump"},
+		TaskManagerID:   st.taskManagerID,
+		Summary:         &summary,
+		NextActions: []string{
+			"优先查看 summary.states 和 summary.interesting_threads，确认是否有 Doris、HTTP/socket write、checkpoint 或 BLOCKED 线程。",
+			"需要完整线程栈时重新执行：flink-cli thread-dump --include-threads --taskmanager-id <id> <url>。",
+		},
+	}
+	if st.includeThreads {
+		env.ThreadInfos = dump.ThreadInfos
+	}
 	if err := output.WriteJSON(stdout, env); err != nil {
 		apperr.WriteJSON(stderr, apperr.New("OUTPUT_ERROR", err.Error(), "检查 stdout 是否可写"))
 		return 1

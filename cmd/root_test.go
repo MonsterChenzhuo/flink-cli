@@ -255,6 +255,55 @@ func TestDiagnoseCommandListJobs(t *testing.T) {
 	}
 }
 
+func TestThreadDumpCommandInfersTaskManagerIDFromWebUIFragment(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/proxy/application_1/taskmanagers/container_1/thread-dump", func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"threadInfos":[{"threadName":"doris-writer","stringifiedThreadInfo":"\"doris-writer\" Id=1 RUNNABLE\n\tat java.net.SocketOutputStream.socketWrite0(Native Method)\n\tat org.apache.doris.flink.sink.writer.DorisWriter.write(DorisWriter.java:1)\n\n"}]}`))
+	})
+	server := httptest.NewServer(mux)
+	defer server.Close()
+
+	rawURL := server.URL + "/proxy/application_1/#/task-manager/container_1/thread-dump"
+	var stdout, stderr bytes.Buffer
+	rc := RunWith(context.Background(), []string{"thread-dump", rawURL}, &stdout, &stderr)
+	if rc != 0 {
+		t.Fatalf("RunWith rc = %d, stderr = %s", rc, stderr.String())
+	}
+	var env map[string]any
+	if err := json.Unmarshal(stdout.Bytes(), &env); err != nil {
+		t.Fatalf("stdout is not JSON: %v\n%s", err, stdout.String())
+	}
+	if got, want := env["scenario"], "thread-dump"; got != want {
+		t.Fatalf("scenario = %v, want %v", got, want)
+	}
+	summary := env["summary"].(map[string]any)
+	if got, want := summary["interesting_count"], float64(1); got != want {
+		t.Fatalf("interesting_count = %v, want %v", got, want)
+	}
+}
+
+func TestThreadDumpCommandListsTaskManagersWhenIDMissing(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/taskmanagers", func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"taskmanagers":[{"id":"container_1"}]}`))
+	})
+	server := httptest.NewServer(mux)
+	defer server.Close()
+
+	var stdout, stderr bytes.Buffer
+	rc := RunWith(context.Background(), []string{"thread-dump", server.URL}, &stdout, &stderr)
+	if rc != 0 {
+		t.Fatalf("RunWith rc = %d, stderr = %s", rc, stderr.String())
+	}
+	var env map[string]any
+	if err := json.Unmarshal(stdout.Bytes(), &env); err != nil {
+		t.Fatalf("stdout is not JSON: %v\n%s", err, stdout.String())
+	}
+	if got, want := env["scenario"], "thread-dump-list-taskmanagers"; got != want {
+		t.Fatalf("scenario = %v, want %v", got, want)
+	}
+}
+
 func TestDiagnoseCommandQuietWarningsSummarizesWarnings(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/jobs/overview", func(w http.ResponseWriter, r *http.Request) {

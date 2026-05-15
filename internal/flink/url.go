@@ -84,6 +84,34 @@ func ExtractJobIDFromWebURL(raw string) string {
 	return ""
 }
 
+func ExtractTaskManagerIDFromWebURL(raw string) string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return ""
+	}
+	if !strings.Contains(raw, "://") {
+		raw = "http://" + raw
+	}
+	u, err := url.Parse(raw)
+	if err != nil {
+		return ""
+	}
+	if id := extractAfterRouteToken(u.Fragment, "task-manager"); id != "" {
+		return id
+	}
+	return extractAfterRouteToken(u.Path, "task-manager")
+}
+
+func extractAfterRouteToken(route, token string) string {
+	parts := splitRoute(route)
+	for i := 0; i+1 < len(parts); i++ {
+		if parts[i] == token {
+			return parts[i+1]
+		}
+	}
+	return ""
+}
+
 func splitRoute(route string) []string {
 	route = strings.Trim(route, "/")
 	if route == "" {

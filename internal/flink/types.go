@@ -171,6 +171,43 @@ type DashboardConfig struct {
 	FlinkRevision string `json:"flink-revision"`
 }
 
+type TaskManagersResponse struct {
+	TaskManagers []TaskManagerOverview `json:"taskmanagers"`
+}
+
+type TaskManagerOverview struct {
+	ID        string `json:"id"`
+	Path      string `json:"path,omitempty"`
+	DataPort  int    `json:"dataPort,omitempty"`
+	JMXPort   int    `json:"jmxPort,omitempty"`
+	Slots     int    `json:"slotsNumber,omitempty"`
+	FreeSlots int    `json:"freeSlots,omitempty"`
+}
+
+type ThreadDump struct {
+	ThreadInfos []ThreadInfo `json:"threadInfos"`
+}
+
+type ThreadInfo struct {
+	ThreadName            string `json:"threadName"`
+	StringifiedThreadInfo string `json:"stringifiedThreadInfo"`
+}
+
+type ThreadDumpSummary struct {
+	TotalThreads       int             `json:"total_threads"`
+	States             map[string]int  `json:"states"`
+	Reasons            map[string]int  `json:"reasons,omitempty"`
+	InterestingCount   int             `json:"interesting_count"`
+	InterestingThreads []ThreadSummary `json:"interesting_threads,omitempty"`
+}
+
+type ThreadSummary struct {
+	ThreadName string   `json:"thread_name"`
+	State      string   `json:"state,omitempty"`
+	Reason     string   `json:"reason,omitempty"`
+	TopFrames  []string `json:"top_frames,omitempty"`
+}
+
 type BackpressureInfo struct {
 	Status             string                `json:"status,omitempty"`
 	BackpressureLevel  string                `json:"backpressure-level,omitempty"`

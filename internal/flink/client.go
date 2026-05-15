@@ -61,6 +61,26 @@ func (c *Client) ListJobs(ctx context.Context) ([]JobOverview, error) {
 	return overview.Jobs, nil
 }
 
+func (c *Client) ListTaskManagers(ctx context.Context) ([]TaskManagerOverview, error) {
+	var response TaskManagersResponse
+	if err := c.getJSON(ctx, "/taskmanagers", &response); err != nil {
+		return nil, err
+	}
+	return response.TaskManagers, nil
+}
+
+func (c *Client) GetThreadDump(ctx context.Context, taskManagerID string) (ThreadDump, error) {
+	taskManagerID = strings.TrimSpace(taskManagerID)
+	if taskManagerID == "" {
+		return ThreadDump{}, fmt.Errorf("empty TaskManager id")
+	}
+	var dump ThreadDump
+	if err := c.getJSON(ctx, "/taskmanagers/"+url.PathEscape(taskManagerID)+"/thread-dump", &dump); err != nil {
+		return ThreadDump{}, err
+	}
+	return dump, nil
+}
+
 func (c *Client) CollectWithOptions(ctx context.Context, opts CollectOptions) (Snapshot, error) {
 	var overview struct {
 		Jobs []JobOverview `json:"jobs"`

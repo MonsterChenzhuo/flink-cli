@@ -60,10 +60,20 @@ Use `flink-cli` to query the Flink Web UI REST API and emit compact JSON for ana
 
    `--max-vertices 0` disables the per-job backpressure collection limit.
 
+6. To inspect a TaskManager thread dump, run:
+
+   ```bash
+   flink-cli thread-dump <flink-web-ui-url>
+   flink-cli thread-dump --taskmanager-id <taskManagerId> <flink-web-ui-url>
+   ```
+
+   If the URL is a full thread-dump page such as `#/task-manager/<taskManagerId>/thread-dump`, `flink-cli` automatically infers the TaskManager id. Read `summary.states`, `summary.reasons`, and `summary.interesting_threads` first. Do not add `--include-threads` unless full stacks are needed.
+
 ## Input handling
 
 `flink-cli` accepts both full URLs and `host:port`; `host:port` defaults to `http://host:port`. Gateway path prefixes are preserved when constructing REST paths.
 If the URL is a full Flink job page such as `#/job/running/<jobId>/overview`, `flink-cli` automatically infers that job id when `--job-id` is omitted.
+If the URL is a full TaskManager thread dump page such as `#/task-manager/<taskManagerId>/thread-dump`, `flink-cli thread-dump` automatically infers that TaskManager id.
 
 ## Errors
 

@@ -39,6 +39,13 @@ func TestExtractJobIDFromWebURLFragment(t *testing.T) {
 	}
 }
 
+func TestExtractTaskManagerIDFromWebURLFragment(t *testing.T) {
+	raw := "https://gateway/proxy/application_1/#/task-manager/container_e57_1777980975440_136612_01_000009/thread-dump"
+	if got, want := ExtractTaskManagerIDFromWebURL(raw), "container_e57_1777980975440_136612_01_000009"; got != want {
+		t.Fatalf("ExtractTaskManagerIDFromWebURL = %q, want %q", got, want)
+	}
+}
+
 func TestClientCollectsJobSnapshot(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/flink/jobs/overview", func(w http.ResponseWriter, r *http.Request) {
@@ -208,6 +215,55 @@ func TestClientListJobsOnlyFetchesOverview(t *testing.T) {
 	}
 	if got, want := len(jobs), 1; got != want {
 		t.Fatalf("jobs length = %d, want %d", got, want)
+	}
+}
+
+func TestClientGetsThreadDump(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/taskmanagers/container_1/thread-dump", func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"threadInfos":[{"threadName":"stream-load-upload-1-table-thread-1","stringifiedThreadInfo":"\"stream-load-upload-1-table-thread-1\" Id=1 RUNNABLE\n\tat java.net.SocketOutputStream.socketWrite0(Native Method)\n\tat org.apache.doris.flink.sink.writer.DorisWriter.write(DorisWriter.java:1)\n\n"}]}`))
+	})
+	server := httptest.NewServer(mux)
+	defer server.Close()
+
+	client, err := NewClient(server.URL)
+	if err != nil {
+		t.Fatalf("NewClient returned error: %v", err)
+	}
+	dump, err := client.GetThreadDump(context.Background(), "container_1")
+	if err != nil {
+		t.Fatalf("GetThreadDump returned error: %v", err)
+	}
+	if got, want := len(dump.ThreadInfos), 1; got != want {
+		t.Fatalf("thread count = %d, want %d", got, want)
+	}
+	summary := SummarizeThreadDump(dump, 10)
+	if got, want := summary.States["RUNNABLE"], 1; got != want {
+		t.Fatalf("RUNNABLE threads = %d, want %d", got, want)
+	}
+	if got, want := summary.InterestingThreads[0].Reason, "doris_stream_load_socket_write"; got != want {
+		t.Fatalf("reason = %q, want %q", got, want)
+	}
+}
+
+func TestClientListTaskManagers(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/taskmanagers", func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"taskmanagers":[{"id":"container_1","slotsNumber":6,"freeSlots":0}]}`))
+	})
+	server := httptest.NewServer(mux)
+	defer server.Close()
+
+	client, err := NewClient(server.URL)
+	if err != nil {
+		t.Fatalf("NewClient returned error: %v", err)
+	}
+	taskManagers, err := client.ListTaskManagers(context.Background())
+	if err != nil {
+		t.Fatalf("ListTaskManagers returned error: %v", err)
+	}
+	if got, want := taskManagers[0].ID, "container_1"; got != want {
+		t.Fatalf("TaskManager id = %q, want %q", got, want)
 	}
 }
 

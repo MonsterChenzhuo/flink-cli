@@ -225,6 +225,7 @@ type ThreadDumpSummary struct {
 	States             map[string]int  `json:"states"`
 	Reasons            map[string]int  `json:"reasons,omitempty"`
 	InterestingCount   int             `json:"interesting_count"`
+	Interpretation     string          `json:"interpretation,omitempty"`
 	InterestingThreads []ThreadSummary `json:"interesting_threads,omitempty"`
 }
 

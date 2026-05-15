@@ -38,7 +38,27 @@ func SummarizeThreadDump(dump ThreadDump, maxInteresting int) ThreadDumpSummary 
 			TopFrames:  topStackFrames(thread.StringifiedThreadInfo, 8),
 		})
 	}
+	summary.Interpretation = interpretThreadDumpSummary(summary)
 	return summary
+}
+
+func interpretThreadDumpSummary(summary ThreadDumpSummary) string {
+	if summary.TotalThreads == 0 {
+		return "未采集到线程信息；确认 TaskManager id 是否正确。"
+	}
+	if summary.InterestingCount == 0 {
+		return "本次线程快照未发现 Doris、Stream Load、checkpoint、HTTP/socket write 或 BLOCKED 等可疑线程；可对多个 TaskManager 连续采样确认。"
+	}
+	if summary.Reasons["doris_stream_load_socket_write"] > 0 || summary.Reasons["doris_stream_load_waiting_response"] > 0 || summary.Reasons["doris_stream_load_waiting_finish"] > 0 {
+		return "线程快照存在 Doris Stream Load 写入、等待响应或等待完成线程；结合 Doris sink metrics 判断是否为写入链路瓶颈。"
+	}
+	if summary.Reasons["doris_stream_load_waiting_for_records"] > 0 {
+		return "线程快照里部分 Doris Stream Load 上传线程在等待本地 RecordBuffer；单次快照不能单独证明 Doris 端阻塞，需要结合 loadTime/writeDataTime 和多 TaskManager 采样。"
+	}
+	if summary.Reasons["checkpoint"] > 0 {
+		return "线程快照存在 checkpoint 相关线程；结合 checkpoint_summary 判断是否真的影响吞吐。"
+	}
+	return "线程快照存在可疑线程；优先查看 reasons 和 interesting_threads 的 top_frames。"
 }
 
 func threadState(s string) string {

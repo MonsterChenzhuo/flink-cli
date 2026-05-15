@@ -216,7 +216,7 @@ func runThreadDump(ctx context.Context, rawURL string, st state, stdout, stderr 
 	if st.listTaskManagers || st.taskManagerID == "" {
 		taskManagers, err := client.ListTaskManagers(ctx)
 		if err != nil {
-			apperr.WriteJSON(stderr, apperr.New("FLINK_API_UNREACHABLE", err.Error(), "确认 URL 可访问，并且 /taskmanagers 可读取；如果错误包含 x509 或 certificate，可重试加 --insecure-skip-verify"))
+			apperr.WriteJSON(stderr, apperr.New("FLINK_API_UNREACHABLE", err.Error(), flinkAPIHint("确认 URL 可访问，并且 /taskmanagers 可读取")))
 			return 3
 		}
 		base, _ := flink.NormalizeBaseURL(rawURL)
@@ -240,7 +240,7 @@ func runThreadDump(ctx context.Context, rawURL string, st state, stdout, stderr 
 	}
 	dump, err := client.GetThreadDump(ctx, st.taskManagerID)
 	if err != nil {
-		apperr.WriteJSON(stderr, apperr.New("FLINK_API_UNREACHABLE", err.Error(), "确认 TaskManager id 存在，并且 /taskmanagers/<id>/thread-dump 可读取；如果错误包含 x509 或 certificate，可重试加 --insecure-skip-verify"))
+		apperr.WriteJSON(stderr, apperr.New("FLINK_API_UNREACHABLE", err.Error(), flinkAPIHint("确认 TaskManager id 存在，并且 /taskmanagers/<id>/thread-dump 可读取")))
 		return 3
 	}
 	base, _ := flink.NormalizeBaseURL(rawURL)
@@ -283,7 +283,7 @@ func attachWarnings(env *envelope, warnings []string, quiet bool) {
 func runListJobs(ctx context.Context, client *flink.Client, rawURL string, start time.Time, stdout, stderr io.Writer) int {
 	jobs, err := client.ListJobs(ctx)
 	if err != nil {
-		apperr.WriteJSON(stderr, apperr.New("FLINK_API_UNREACHABLE", err.Error(), "确认 URL 可访问，并且 /jobs/overview 可读取"))
+		apperr.WriteJSON(stderr, apperr.New("FLINK_API_UNREACHABLE", err.Error(), flinkAPIHint("确认 URL 可访问，并且 /jobs/overview 可读取")))
 		return 3
 	}
 	base, _ := flink.NormalizeBaseURL(rawURL)
@@ -361,9 +361,9 @@ func buildNextActions(report flink.Report) []string {
 			}
 		case "sink_busy_upstream_backpressure":
 			return []string{
-				"优先查看 finding.evidence.doris_sink_metrics.summary，确认单批 rows/bytes、loadTimeMs 和 writeDataTimeMs。",
+				"优先查看 finding.evidence.interpretation，确认 primary_bottleneck、checkpoint_likely_bottleneck 和 next_focus。",
+				"再查看 finding.evidence.doris_sink_metrics.summary，确认单批 rows/bytes、loadTimeMs、writeDataTimeMs 和 write_data_share_of_load。",
 				"如果 writeDataTimeMs 接近 loadTimeMs，优先排查 Doris BE 写入吞吐、tablet 热点、compaction backlog 和 sink 批次/并发。",
-				"需要完整 REST 原始数据时重新执行：flink-cli diagnose --include-snapshot <url>。",
 			}
 		}
 	}
@@ -378,4 +378,8 @@ func normalizeErr(err error) error {
 		return nil
 	}
 	return apperr.New("FLAG_INVALID", err.Error(), "see `flink-cli --help`")
+}
+
+func flinkAPIHint(prefix string) string {
+	return prefix + "；如果错误包含 x509 或 certificate，可重试加 --insecure-skip-verify；如果返回 HTML，检查 YARN application/proxy 是否过期、跳到 attempts 页面或被登录页拦截"
 }

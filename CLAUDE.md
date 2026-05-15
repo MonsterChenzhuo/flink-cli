@@ -128,8 +128,9 @@ stderr 输出 JSON error：
 
 `thread-dump` 输出规则：
 
-- 默认输出 `summary.total_threads`、`summary.states`、`summary.reasons` 和 `summary.interesting_threads`，避免完整栈撑爆 AI 上下文。
+- 默认输出 `summary.total_threads`、`summary.states`、`summary.reasons`、`summary.interpretation` 和 `summary.interesting_threads`，避免完整栈撑爆 AI 上下文。
 - `summary.interesting_threads` 会优先标注 Doris、Stream Load、checkpoint、HTTP/socket write、BLOCKED 等可疑线程。
+- 如果 `summary.interesting_count=0`，`summary.interpretation` 会说明本次快照未发现可疑线程；这不等于作业没有问题，只说明该 TaskManager 的瞬时线程栈没有命中特征，需要结合 metrics 或多 TM/多次采样。
 - 用户明确需要完整线程栈时才使用 `--include-threads`。
 
 ## 开发约定

@@ -247,6 +247,22 @@ func TestClientGetsThreadDump(t *testing.T) {
 	if got, want := summary.InterestingThreads[0].Reason, "doris_stream_load_socket_write"; got != want {
 		t.Fatalf("reason = %q, want %q", got, want)
 	}
+	if !strings.Contains(summary.Interpretation, "Doris Stream Load") {
+		t.Fatalf("interpretation should mention Doris Stream Load: %q", summary.Interpretation)
+	}
+}
+
+func TestSummarizeThreadDumpExplainsNoInterestingThreads(t *testing.T) {
+	summary := SummarizeThreadDump(ThreadDump{ThreadInfos: []ThreadInfo{{
+		ThreadName:            "flink-akka.actor.default-dispatcher",
+		StringifiedThreadInfo: "\"flink-akka.actor.default-dispatcher\" Id=1 WAITING\n\tat java.lang.Object.wait(Native Method)\n\n",
+	}}}, 10)
+	if got, want := summary.InterestingCount, 0; got != want {
+		t.Fatalf("interesting count = %d, want %d", got, want)
+	}
+	if !strings.Contains(summary.Interpretation, "未发现") {
+		t.Fatalf("interpretation should explain empty interesting threads: %q", summary.Interpretation)
+	}
 }
 
 func TestSummarizeDorisSinkMetricsRoundsAndDerivesReadableFields(t *testing.T) {

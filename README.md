@@ -115,6 +115,8 @@ Doris Writer 反压场景下，`sink_busy_upstream_backpressure` 的 evidence �
 - `checkpoint_summary`：checkpoint completed/failed、最近成功耗时、历史平均/最大耗时、state size、alignment buffered。
 - `interpretation`：面向 AI 的判断提示，例如主要瓶颈是否为 `doris_stream_load_write_data`、checkpoint 是否像瓶颈、下一步应该优先看 Doris BE/tablet/compaction 还是 Flink 参数。
 
+`thread-dump` 默认也会输出 `summary.interpretation`。当 `interesting_count=0` 时，它会明确说明本次线程快照没有命中特征，避免把空 `interesting_threads` 误读成采集失败。
+
 多作业或大作业场景：
 
 ```bash

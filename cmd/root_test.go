@@ -255,6 +255,25 @@ func TestDiagnoseCommandListJobs(t *testing.T) {
 	}
 }
 
+func TestDiagnoseCommandListJobsReturnsHelpfulHTMLHint(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/jobs/overview", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		_, _ = w.Write([]byte(`<html><body>attempts page</body></html>`))
+	})
+	server := httptest.NewServer(mux)
+	defer server.Close()
+
+	var stdout, stderr bytes.Buffer
+	rc := RunWith(context.Background(), []string{"diagnose", "--list-jobs", server.URL}, &stdout, &stderr)
+	if rc != 3 {
+		t.Fatalf("RunWith rc = %d, want 3; stderr = %s", rc, stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "返回 HTML") || !strings.Contains(stderr.String(), "YARN application/proxy") {
+		t.Fatalf("stderr should explain HTML/YARN proxy issue: %s", stderr.String())
+	}
+}
+
 func TestThreadDumpCommandInfersTaskManagerIDFromWebUIFragment(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/proxy/application_1/taskmanagers/container_1/thread-dump", func(w http.ResponseWriter, r *http.Request) {
@@ -279,6 +298,25 @@ func TestThreadDumpCommandInfersTaskManagerIDFromWebUIFragment(t *testing.T) {
 	summary := env["summary"].(map[string]any)
 	if got, want := summary["interesting_count"], float64(1); got != want {
 		t.Fatalf("interesting_count = %v, want %v", got, want)
+	}
+}
+
+func TestThreadDumpCommandReturnsHelpfulHTMLHint(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/taskmanagers/container_1/thread-dump", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		_, _ = w.Write([]byte(`<html><body>login</body></html>`))
+	})
+	server := httptest.NewServer(mux)
+	defer server.Close()
+
+	var stdout, stderr bytes.Buffer
+	rc := RunWith(context.Background(), []string{"thread-dump", "--taskmanager-id", "container_1", server.URL}, &stdout, &stderr)
+	if rc != 3 {
+		t.Fatalf("RunWith rc = %d, want 3; stderr = %s", rc, stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "返回 HTML") || !strings.Contains(stderr.String(), "attempts") {
+		t.Fatalf("stderr should explain HTML/YARN proxy issue: %s", stderr.String())
 	}
 }
 

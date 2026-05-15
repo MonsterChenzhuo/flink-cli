@@ -67,7 +67,7 @@ Use `flink-cli` to query the Flink Web UI REST API and emit compact JSON for ana
    flink-cli thread-dump --taskmanager-id <taskManagerId> <flink-web-ui-url>
    ```
 
-   If the URL is a full thread-dump page such as `#/task-manager/<taskManagerId>/thread-dump`, `flink-cli` automatically infers the TaskManager id. Read `summary.states`, `summary.reasons`, and `summary.interesting_threads` first. Do not add `--include-threads` unless full stacks are needed.
+   If the URL is a full thread-dump page such as `#/task-manager/<taskManagerId>/thread-dump`, `flink-cli` automatically infers the TaskManager id. Read `summary.interpretation`, `summary.states`, `summary.reasons`, and `summary.interesting_threads` first. Do not add `--include-threads` unless full stacks are needed.
 
 ## Input handling
 

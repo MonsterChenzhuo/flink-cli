@@ -4,7 +4,7 @@
 #
 # Env overrides:
 #   VERSION=v0.1.2                 pin a specific release (default: latest)
-#   PREFIX=/usr/local/bin          install directory for the binary
+#   PREFIX=~/.local/bin            install directory for the binary
 #   SKILL_DIR=~/.claude/skills/flink install directory for the bundled Claude Code skill
 #   AGENTS_SKILL_DIR=~/.agents/skills/flink install directory for the bundled Codex skill
 #   CODEX_SKILL_DIR=~/.codex/skills/flink install directory for an extra Codex-local skill copy
@@ -18,7 +18,7 @@
 set -euo pipefail
 
 REPO="${REPO:-MonsterChenzhuo/flink-cli}"
-PREFIX="${PREFIX:-/usr/local/bin}"
+PREFIX="${PREFIX:-$HOME/.local/bin}"
 SKILL_DIR="${SKILL_DIR:-$HOME/.claude/skills/flink}"
 AGENTS_SKILL_DIR="${AGENTS_SKILL_DIR:-$HOME/.agents/skills/flink}"
 CODEX_SKILL_DIR="${CODEX_SKILL_DIR:-$HOME/.codex/skills/flink}"
@@ -34,6 +34,20 @@ tar_cmd() { LC_ALL=C LANG=C tar "$@"; }
 need curl
 need tar
 need uname
+
+can_install_without_sudo() {
+  local path="$1"
+  if [ -d "$path" ]; then
+    [ -w "$path" ]
+    return
+  fi
+  local parent
+  parent=$(dirname "$path")
+  while [ ! -d "$parent" ] && [ "$parent" != "/" ]; do
+    parent=$(dirname "$parent")
+  done
+  [ -w "$parent" ]
+}
 
 os=$(uname -s | tr '[:upper:]' '[:lower:]')
 case "$os" in
@@ -88,7 +102,7 @@ tar_cmd -xzf "${tmpdir}/${archive}" -C "${tmpdir}"
 [ -x "${tmpdir}/flink-cli" ] || die "binary not found in archive"
 
 sudo_cmd=""
-if [ ! -w "$PREFIX" ] && [ "$(id -u)" -ne 0 ]; then
+if ! can_install_without_sudo "$PREFIX" && [ "$(id -u)" -ne 0 ]; then
   if [ "${NO_SUDO:-0}" = "1" ]; then
     die "PREFIX=$PREFIX not writable and NO_SUDO=1"
   fi

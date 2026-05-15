@@ -107,3 +107,24 @@ test -f "${skill_dir}/SKILL.md"
 test -f "${agents_skill_dir}/SKILL.md"
 test -f "${codex_skill_dir}/SKILL.md"
 test -f "${command_dir}/flink.md"
+
+default_home="${tmpdir}/default-home"
+mkdir -p "$default_home"
+stderr_default="${tmpdir}/install-default.err"
+set +e
+PATH="${stub_bin}:$PATH" \
+HOME="$default_home" \
+VERSION="$version" \
+NO_SKILL=1 \
+NO_CODEX_SKILL=1 \
+NO_COMMAND=1 \
+env -u PREFIX "${repo_root}/scripts/install.sh" >/dev/null 2>"$stderr_default"
+status=$?
+set -e
+
+if [ "$status" -ne 0 ]; then
+  cat "$stderr_default" >&2
+  exit "$status"
+fi
+
+test -x "${default_home}/.local/bin/flink-cli"

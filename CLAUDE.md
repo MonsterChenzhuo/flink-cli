@@ -48,6 +48,7 @@ https://nightlies.apache.org/flink/flink-docs-release-1.18/docs/ops/rest_api/
 - `GET /jobs/:jobid/exceptions`：root exception 和异常列表。
 - `GET /jobs/:jobid/checkpoints`：checkpoint 统计。
 - `GET /jobs/:jobid/vertices/:vertexid/backpressure`：vertex 反压信息。
+- `GET /jobs/:jobid/vertices/:vertexid/metrics`：对 Doris Writer vertex 做受限采样，提取 Stream Load flush/load/writeData 指标。
 
 除 `/jobs/overview` 外，单个详情端点失败时不要让整个诊断失败；把错误放入 `snapshot.warnings`，继续输出已采集到的数据。
 
@@ -111,6 +112,7 @@ stderr 输出 JSON error：
 - `vertex_failed`：vertex 处于 failed/canceled/canceling。
 - `backpressure_high`：vertex backpressure level 为 high。
 - `sink_busy_upstream_backpressure`：sink 自身 backpressure 可能是 ok，但 sink busy 较高且上游 vertex 已累计反压。这个规则用于 Doris Writer 这类场景，避免 agent 被 “Writer backpressure=ok” 误导；应继续检查外部系统吞吐、sink flush/load/commit 指标、批次大小、checkpoint 周期和 sink 并发。
+  - 如果命中 Doris Writer，`finding.evidence.doris_sink_metrics.summary` 会包含采样 subtask 的 `per_flush_rows_mean`、`per_flush_bytes_mean`、`load_time_ms_mean/max`、`write_data_time_ms_mean/max`、`begin_txn_time_ms_mean`、`commit_and_publish_time_ms_mean`。
 - `no_obvious_issue`：没有命中明显异常时输出 ok finding。
 
 后续扩展规则时，先加测试，再实现。避免只凭字段存在就输出高置信度结论；`severity` 表示诊断置信度，不等于优化 ROI。
@@ -129,6 +131,7 @@ stderr 输出 JSON error：
   - 遇到证书错误要自动加 `--insecure-skip-verify` 重试一次，不要退回手写 `curl -k`。
   - 遇到 `returned non-JSON response`/`got HTML` 时，说明当前 URL 没拿到 Flink REST JSON，优先检查 YARN proxy/application 是否过期或被登录页拦截。
   - 看到 `sink_busy_upstream_backpressure` 时，先说明“sink 写入繁忙导致上游反压”，再给证据；不要只说 REST 没发现 high backpressure。
+  - Doris Writer 场景要优先引用 `finding.evidence.doris_sink_metrics.summary`，不要再手写 Python/curl 去拼 metrics，除非需要更深的全量 subtask 分析。
   - Doris 写入场景优先提醒检查 Stream Load `writeDataTimeMs/loadTimeMs`、`sink.enable.batch-mode`、`sink.buffer-flush.*`、checkpoint 周期、sink 并发、BE load/compaction/tablet 热点。
 - 主要包：
   - `cmd`：命令入口、退出码、JSON envelope。
@@ -151,4 +154,4 @@ CI 参考 `spark-cli`：`.github/workflows/ci.yml` 负责 `go mod tidy`、`go ve
 - 暂不主动读取 YARN ResourceManager 或 NodeManager 日志。
 - `/jobs/:jobid/vertices/:vertexid/backpressure` 可能触发采样，详情端点失败只记录 warning。
 - gateway 代理如果改写 path 或要求额外 header，需要用户在外层代理侧处理。
-- Doris connector 的自定义 Stream Load metrics 目前不做全量采集，避免大作业输出爆炸；需要进一步自动化时，优先做受限采样和按 sink vertex 名称触发的专项采集。
+- Doris connector 的自定义 Stream Load metrics 只做受限采样，不做全量 subtask 采集，避免大作业输出爆炸；需要更深分析时再按具体 subtask 下钻。

@@ -50,6 +50,7 @@ type Vertex struct {
 	Duration     int64             `json:"duration,omitempty"`
 	Tasks        TaskCounts        `json:"tasks,omitempty"`
 	Metrics      VertexMetrics     `json:"metrics,omitempty"`
+	DorisMetrics *DorisSinkMetrics `json:"doris_metrics,omitempty"`
 	Backpressure *BackpressureInfo `json:"backpressure,omitempty"`
 }
 
@@ -61,6 +62,41 @@ type VertexMetrics struct {
 	AccumulatedBackpressuredMS float64 `json:"accumulated-backpressured-time,omitempty"`
 	AccumulatedBusyMS          float64 `json:"accumulated-busy-time,omitempty"`
 	AccumulatedIdleMS          float64 `json:"accumulated-idle-time,omitempty"`
+}
+
+type DorisSinkMetrics struct {
+	Summary DorisSinkMetricsSummary  `json:"summary,omitempty"`
+	Samples []DorisSinkMetricsSample `json:"samples,omitempty"`
+}
+
+type DorisSinkMetricsSummary struct {
+	SampledSubtasks            []int   `json:"sampled_subtasks,omitempty"`
+	FlushSucceededTotal        float64 `json:"flush_succeeded_total,omitempty"`
+	FlushFailedTotal           float64 `json:"flush_failed_total,omitempty"`
+	PerFlushRowsMean           float64 `json:"per_flush_rows_mean,omitempty"`
+	PerFlushBytesMean          float64 `json:"per_flush_bytes_mean,omitempty"`
+	LoadTimeMsMean             float64 `json:"load_time_ms_mean,omitempty"`
+	LoadTimeMsMax              float64 `json:"load_time_ms_max,omitempty"`
+	WriteDataTimeMsMean        float64 `json:"write_data_time_ms_mean,omitempty"`
+	WriteDataTimeMsMax         float64 `json:"write_data_time_ms_max,omitempty"`
+	BeginTxnTimeMsMean         float64 `json:"begin_txn_time_ms_mean,omitempty"`
+	CommitAndPublishTimeMsMean float64 `json:"commit_and_publish_time_ms_mean,omitempty"`
+}
+
+type DorisSinkMetricsSample struct {
+	Subtask                    int     `json:"subtask"`
+	FlushSucceeded             float64 `json:"flush_succeeded,omitempty"`
+	FlushFailed                float64 `json:"flush_failed,omitempty"`
+	FlushLoadedRows            float64 `json:"flush_loaded_rows,omitempty"`
+	FlushLoadBytes             float64 `json:"flush_load_bytes,omitempty"`
+	FlushTimeMs                float64 `json:"flush_time_ms,omitempty"`
+	LoadTimeMsMean             float64 `json:"load_time_ms_mean,omitempty"`
+	LoadTimeMsMax              float64 `json:"load_time_ms_max,omitempty"`
+	WriteDataTimeMsMean        float64 `json:"write_data_time_ms_mean,omitempty"`
+	WriteDataTimeMsMax         float64 `json:"write_data_time_ms_max,omitempty"`
+	BeginTxnTimeMsMean         float64 `json:"begin_txn_time_ms_mean,omitempty"`
+	CommitAndPublishTimeMsMean float64 `json:"commit_and_publish_time_ms_mean,omitempty"`
+	PutDataTimeMsMean          float64 `json:"put_data_time_ms_mean,omitempty"`
 }
 
 type TaskCounts struct {

@@ -54,7 +54,12 @@ func Diagnose(snapshot Snapshot) Report {
 		})
 	}
 	sort.SliceStable(report.Findings, func(i, j int) bool {
-		return severityRank(report.Findings[i].Severity) > severityRank(report.Findings[j].Severity)
+		leftSeverity := severityRank(report.Findings[i].Severity)
+		rightSeverity := severityRank(report.Findings[j].Severity)
+		if leftSeverity != rightSeverity {
+			return leftSeverity > rightSeverity
+		}
+		return rulePriority(report.Findings[i].RuleID) > rulePriority(report.Findings[j].RuleID)
 	})
 	for _, f := range report.Findings {
 		switch f.Severity {
@@ -136,7 +141,7 @@ func diagnoseJob(job JobSnapshot) []Finding {
 				RuleID:     "backpressure_high",
 				Severity:   "warn",
 				Title:      "作业 vertex 存在高反压",
-				Evidence:   map[string]any{"job_id": jobID, "job_name": jobName, "vertex_id": vertex.ID, "vertex_name": vertex.Name, "backpressure": vertex.Backpressure},
+				Evidence:   map[string]any{"job_id": jobID, "job_name": jobName, "vertex_id": vertex.ID, "vertex_name": vertex.Name, "backpressure": summarizeBackpressure(*vertex.Backpressure)},
 				Suggestion: "优先检查该 vertex 下游 sink、网络缓冲、checkpoint 对齐耗时和外部系统写入延迟；若是 source 前段反压，继续沿下游 vertex 追踪。",
 			})
 		}
@@ -192,6 +197,9 @@ func diagnoseBusySinkBackpressure(jobID, jobName string, vertices []Vertex) []Fi
 			"accumulated_idle_ms":       vertex.Metrics.AccumulatedIdleMS,
 			"upstream_backpressured_ms": upstreamEvidence,
 		}
+		if vertex.DorisMetrics != nil {
+			evidence["doris_sink_metrics"] = map[string]any{"summary": vertex.DorisMetrics.Summary}
+		}
 		findings = append(findings, Finding{
 			RuleID:     "sink_busy_upstream_backpressure",
 			Severity:   "warn",
@@ -201,6 +209,44 @@ func diagnoseBusySinkBackpressure(jobID, jobName string, vertices []Vertex) []Fi
 		})
 	}
 	return findings
+}
+
+func summarizeBackpressure(bp BackpressureInfo) map[string]any {
+	out := map[string]any{
+		"status": bp.Status,
+		"level":  bp.Level(),
+	}
+	if len(bp.Subtasks) == 0 {
+		return out
+	}
+	out["subtasks_total"] = len(bp.Subtasks)
+	var high, low, okCount int
+	var ratioSum, busySum, idleSum, maxRatio float64
+	for _, subtask := range bp.Subtasks {
+		switch strings.ToLower(subtask.Level()) {
+		case "high":
+			high++
+		case "low":
+			low++
+		case "ok":
+			okCount++
+		}
+		ratioSum += subtask.Ratio
+		busySum += subtask.BusyRatio
+		idleSum += subtask.IdleRatio
+		if subtask.Ratio > maxRatio {
+			maxRatio = subtask.Ratio
+		}
+	}
+	total := float64(len(bp.Subtasks))
+	out["subtasks_high"] = high
+	out["subtasks_low"] = low
+	out["subtasks_ok"] = okCount
+	out["ratio_avg"] = round3(ratioSum / total)
+	out["ratio_max"] = round3(maxRatio)
+	out["busy_ratio_avg"] = round3(busySum / total)
+	out["idle_ratio_avg"] = round3(idleSum / total)
+	return out
 }
 
 func looksLikeSink(name string) bool {
@@ -257,6 +303,21 @@ func severityRank(s string) int {
 		return 2
 	default:
 		return 1
+	}
+}
+
+func rulePriority(ruleID string) int {
+	switch ruleID {
+	case "root_exception", "job_failed", "vertex_failed":
+		return 30
+	case "sink_busy_upstream_backpressure":
+		return 25
+	case "backpressure_high":
+		return 20
+	case "checkpoint_failure_rate", "checkpoint_slow":
+		return 15
+	default:
+		return 0
 	}
 }
 

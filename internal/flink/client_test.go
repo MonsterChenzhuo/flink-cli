@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
@@ -236,5 +237,83 @@ func TestClientLimitsBackpressureCollectionByMaxVertices(t *testing.T) {
 	}
 	if len(snapshot.Warnings) == 0 {
 		t.Fatalf("expected warning about skipped vertices")
+	}
+}
+
+func TestClientSamplesDorisSinkMetrics(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/jobs/overview", func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"jobs":[{"jid":"job-1","name":"sync","state":"RUNNING"}]}`))
+	})
+	mux.HandleFunc("/jobs/job-1", func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"jid":"job-1","name":"sync","state":"RUNNING","vertices":[{"id":"sink","name":"dorisSink: Writer","parallelism":4,"status":"RUNNING"}]}`))
+	})
+	mux.HandleFunc("/jobs/job-1/vertices/sink/backpressure", func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"status":"ok","backpressure-level":"ok"}`))
+	})
+	handleMetrics := func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("get") == "" {
+			_, _ = w.Write([]byte(`[
+				{"id":"dorisSink__Writer.table_totalFlushSucceededNumber"},
+				{"id":"dorisSink__Writer.table_totalFlushLoadedRows"},
+				{"id":"dorisSink__Writer.table_totalFlushLoadBytes"},
+				{"id":"dorisSink__Writer.table_loadTimeMs_mean"},
+				{"id":"dorisSink__Writer.table_loadTimeMs_max"},
+				{"id":"dorisSink__Writer.table_writeDataTimeMs_mean"},
+				{"id":"dorisSink__Writer.table_writeDataTimeMs_max"},
+				{"id":"dorisSink__Writer.table_commitAndPublishTimeMs_mean"}
+			]`))
+			return
+		}
+		if strings.Contains(r.URL.Path, "/subtasks/3/") {
+			_, _ = w.Write([]byte(`[
+				{"id":"dorisSink__Writer.table_totalFlushSucceededNumber","value":"2"},
+				{"id":"dorisSink__Writer.table_totalFlushLoadedRows","value":"44000"},
+				{"id":"dorisSink__Writer.table_totalFlushLoadBytes","value":"1200000000"},
+				{"id":"dorisSink__Writer.table_loadTimeMs_mean","value":"95000"},
+				{"id":"dorisSink__Writer.table_loadTimeMs_max","value":"110000"},
+				{"id":"dorisSink__Writer.table_writeDataTimeMs_mean","value":"94000"},
+				{"id":"dorisSink__Writer.table_writeDataTimeMs_max","value":"109000"}
+			]`))
+			return
+		}
+		_, _ = w.Write([]byte(`[
+			{"id":"dorisSink__Writer.table_totalFlushSucceededNumber","value":"2"},
+			{"id":"dorisSink__Writer.table_totalFlushLoadedRows","value":"40000"},
+			{"id":"dorisSink__Writer.table_totalFlushLoadBytes","value":"1000000000"},
+			{"id":"dorisSink__Writer.table_loadTimeMs_mean","value":"90000"},
+			{"id":"dorisSink__Writer.table_loadTimeMs_max","value":"100000"},
+			{"id":"dorisSink__Writer.table_writeDataTimeMs_mean","value":"89000"},
+			{"id":"dorisSink__Writer.table_writeDataTimeMs_max","value":"99000"},
+			{"id":"dorisSink__Writer.table_commitAndPublishTimeMs_mean","value":"40"}
+		]`))
+	}
+	mux.HandleFunc("/jobs/job-1/vertices/sink/subtasks/0/metrics", handleMetrics)
+	mux.HandleFunc("/jobs/job-1/vertices/sink/subtasks/1/metrics", handleMetrics)
+	mux.HandleFunc("/jobs/job-1/vertices/sink/subtasks/2/metrics", handleMetrics)
+	mux.HandleFunc("/jobs/job-1/vertices/sink/subtasks/3/metrics", handleMetrics)
+	server := httptest.NewServer(mux)
+	defer server.Close()
+
+	client, err := NewClient(server.URL)
+	if err != nil {
+		t.Fatalf("NewClient returned error: %v", err)
+	}
+	snapshot, err := client.CollectWithOptions(context.Background(), CollectOptions{MaxVertices: 0})
+	if err != nil {
+		t.Fatalf("CollectWithOptions returned error: %v", err)
+	}
+	got := snapshot.Jobs[0].Detail.Vertices[0].DorisMetrics
+	if got == nil {
+		t.Fatalf("DorisMetrics was not collected")
+	}
+	if got.Summary.PerFlushBytesMean != 525000000 {
+		t.Fatalf("PerFlushBytesMean = %v, want 525000000", got.Summary.PerFlushBytesMean)
+	}
+	if got.Summary.LoadTimeMsMean != 91250 {
+		t.Fatalf("LoadTimeMsMean = %v, want 91250", got.Summary.LoadTimeMsMean)
+	}
+	if got.Summary.WriteDataTimeMsMax != 109000 {
+		t.Fatalf("WriteDataTimeMsMax = %v, want 109000", got.Summary.WriteDataTimeMsMax)
 	}
 }

@@ -88,6 +88,14 @@ func TestDiagnoseReportsBusySinkWithUpstreamBackpressure(t *testing.T) {
 							AccumulatedBusyMS:          24882980,
 							AccumulatedIdleMS:          36574902,
 						},
+						DorisMetrics: &DorisSinkMetrics{
+							Summary: DorisSinkMetricsSummary{
+								PerFlushBytesMean:          536870912,
+								LoadTimeMsMean:             90000,
+								WriteDataTimeMsMean:        89000,
+								CommitAndPublishTimeMsMean: 40,
+							},
+						},
 						Backpressure: &BackpressureInfo{BackpressureLevel2: "ok"},
 					},
 				},
@@ -99,13 +107,21 @@ func TestDiagnoseReportsBusySinkWithUpstreamBackpressure(t *testing.T) {
 	if !hasFinding(report.Findings, "sink_busy_upstream_backpressure") {
 		t.Fatalf("missing sink busy finding: %+v", report.Findings)
 	}
+	finding := findFinding(report.Findings, "sink_busy_upstream_backpressure")
+	if _, ok := finding.Evidence["doris_sink_metrics"]; !ok {
+		t.Fatalf("missing Doris sink metrics in evidence: %+v", finding.Evidence)
+	}
 }
 
 func hasFinding(findings []Finding, ruleID string) bool {
+	return findFinding(findings, ruleID).RuleID != ""
+}
+
+func findFinding(findings []Finding, ruleID string) Finding {
 	for _, f := range findings {
 		if f.RuleID == ruleID {
-			return true
+			return f
 		}
 	}
-	return false
+	return Finding{}
 }

@@ -255,6 +255,12 @@ func buildNextActions(report flink.Report) []string {
 				"对照 Web UI Back Pressure 和 Metrics 页面确认 busy/idle/backpressured 比例。",
 				"需要完整 REST 原始数据时重新执行：flink-cli diagnose --include-snapshot <url>。",
 			}
+		case "sink_busy_upstream_backpressure":
+			return []string{
+				"优先查看 finding.evidence.doris_sink_metrics.summary，确认单批 rows/bytes、loadTimeMs 和 writeDataTimeMs。",
+				"如果 writeDataTimeMs 接近 loadTimeMs，优先排查 Doris BE 写入吞吐、tablet 热点、compaction backlog 和 sink 批次/并发。",
+				"需要完整 REST 原始数据时重新执行：flink-cli diagnose --include-snapshot <url>。",
+			}
 		}
 	}
 	return []string{

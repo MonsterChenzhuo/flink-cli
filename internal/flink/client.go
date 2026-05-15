@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -118,6 +120,15 @@ func (c *Client) CollectWithOptions(ctx context.Context, opts CollectOptions) (S
 				s.SourceEndpoints = append(s.SourceEndpoints, "/jobs/"+job.JID+"/vertices/"+vertex.ID+"/backpressure")
 				vertex.Backpressure = &bp
 			}
+			if shouldCollectDorisMetrics(*vertex) {
+				metrics, endpoints, err := c.collectDorisSinkMetrics(ctx, job.JID, *vertex)
+				if err != nil {
+					s.addOptionalWarning(fmt.Sprintf("fetch Doris sink metrics %s/%s", job.JID, vertex.ID), err)
+				} else if metrics != nil {
+					s.SourceEndpoints = append(s.SourceEndpoints, endpoints...)
+					vertex.DorisMetrics = metrics
+				}
+			}
 		}
 		if err := c.getJSON(ctx, "/jobs/"+job.JID+"/exceptions", &js.Exceptions); err != nil {
 			s.addOptionalWarning(fmt.Sprintf("fetch exceptions %s", job.JID), err)
@@ -192,7 +203,15 @@ func (e *NonJSONResponseError) Error() string {
 }
 
 func (c *Client) getJSON(ctx context.Context, apiPath string, out any) error {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.base.Endpoint(apiPath), nil)
+	return c.getJSONWithQuery(ctx, apiPath, nil, out)
+}
+
+func (c *Client) getJSONWithQuery(ctx context.Context, apiPath string, query url.Values, out any) error {
+	endpoint := c.base.Endpoint(apiPath)
+	if len(query) > 0 {
+		endpoint += "?" + query.Encode()
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 	if err != nil {
 		return err
 	}
@@ -214,6 +233,216 @@ func (c *Client) getJSON(ctx context.Context, apiPath string, out any) error {
 		return nonJSONError(apiPath, body, err)
 	}
 	return nil
+}
+
+type metricID struct {
+	ID string `json:"id"`
+}
+
+type metricValue struct {
+	ID    string `json:"id"`
+	Value string `json:"value"`
+}
+
+var dorisMetricSuffixes = []string{
+	"totalFlushSucceededNumber",
+	"totalFlushFailedNumber",
+	"totalFlushLoadedRows",
+	"totalFlushLoadBytes",
+	"totalFlushTimeMs",
+	"loadTimeMs_mean",
+	"loadTimeMs_max",
+	"writeDataTimeMs_mean",
+	"writeDataTimeMs_max",
+	"beginTxnTimeMs_mean",
+	"commitAndPublishTimeMs_mean",
+	"putDataTimeMs_mean",
+}
+
+func shouldCollectDorisMetrics(vertex Vertex) bool {
+	name := strings.ToLower(vertex.Name)
+	return strings.Contains(name, "doris") && strings.Contains(name, "writer")
+}
+
+func (c *Client) collectDorisSinkMetrics(ctx context.Context, jobID string, vertex Vertex) (*DorisSinkMetrics, []string, error) {
+	sampleSubtasks := sampleSubtaskIndexes(vertex.Parallelism)
+	samples := make([]DorisSinkMetricsSample, 0, len(sampleSubtasks))
+	endpoints := make([]string, 0, len(sampleSubtasks))
+	var firstErr error
+	for _, subtask := range sampleSubtasks {
+		metricsPath := fmt.Sprintf("/jobs/%s/vertices/%s/subtasks/%d/metrics", jobID, vertex.ID, subtask)
+		var listed []metricID
+		if err := c.getJSON(ctx, metricsPath, &listed); err != nil {
+			if firstErr == nil {
+				firstErr = err
+			}
+			continue
+		}
+		endpoints = append(endpoints, metricsPath)
+		ids := selectDorisSubtaskMetricIDs(listed)
+		if len(ids) == 0 {
+			continue
+		}
+		values := map[string]float64{}
+		const chunkSize = 40
+		for start := 0; start < len(ids); start += chunkSize {
+			end := start + chunkSize
+			if end > len(ids) {
+				end = len(ids)
+			}
+			var rows []metricValue
+			query := url.Values{"get": []string{strings.Join(ids[start:end], ",")}}
+			if err := c.getJSONWithQuery(ctx, metricsPath, query, &rows); err != nil {
+				if firstErr == nil {
+					firstErr = err
+				}
+				continue
+			}
+			for _, row := range rows {
+				if v, ok := parseMetricFloat(row.Value); ok {
+					values[row.ID] = v
+				}
+			}
+		}
+		if sample, ok := buildDorisSinkMetricsSample(subtask, ids, values); ok {
+			samples = append(samples, sample)
+		}
+	}
+	if len(samples) == 0 {
+		return nil, endpoints, firstErr
+	}
+	return &DorisSinkMetrics{Summary: summarizeDorisSinkMetrics(samples), Samples: samples}, endpoints, nil
+}
+
+func sampleSubtaskIndexes(parallelism int) []int {
+	if parallelism <= 0 {
+		return []int{0}
+	}
+	candidates := []int{0, 1, 2, parallelism / 4, parallelism / 2, parallelism * 3 / 4, parallelism - 1}
+	out := make([]int, 0, len(candidates))
+	seen := map[int]bool{}
+	for _, idx := range candidates {
+		if idx < 0 || idx >= parallelism || seen[idx] {
+			continue
+		}
+		seen[idx] = true
+		out = append(out, idx)
+	}
+	return out
+}
+
+func selectDorisSubtaskMetricIDs(listed []metricID) []string {
+	ids := make([]string, 0, len(dorisMetricSuffixes))
+	for _, row := range listed {
+		for _, suffix := range dorisMetricSuffixes {
+			if matchesDorisMetricSuffix(row.ID, suffix) {
+				ids = append(ids, row.ID)
+				break
+			}
+		}
+	}
+	return ids
+}
+
+func matchesDorisMetricSuffix(id, suffix string) bool {
+	return strings.HasSuffix(id, "_"+suffix) || strings.HasSuffix(id, "."+suffix)
+}
+
+func buildDorisSinkMetricsSample(subtask int, ids []string, values map[string]float64) (DorisSinkMetricsSample, bool) {
+	bySuffix := map[string]float64{}
+	for _, id := range ids {
+		value, ok := values[id]
+		if !ok {
+			continue
+		}
+		for _, suffix := range dorisMetricSuffixes {
+			if matchesDorisMetricSuffix(id, suffix) {
+				bySuffix[suffix] = value
+				break
+			}
+		}
+	}
+	if len(bySuffix) == 0 {
+		return DorisSinkMetricsSample{}, false
+	}
+	return DorisSinkMetricsSample{
+		Subtask:                    subtask,
+		FlushSucceeded:             bySuffix["totalFlushSucceededNumber"],
+		FlushFailed:                bySuffix["totalFlushFailedNumber"],
+		FlushLoadedRows:            bySuffix["totalFlushLoadedRows"],
+		FlushLoadBytes:             bySuffix["totalFlushLoadBytes"],
+		FlushTimeMs:                bySuffix["totalFlushTimeMs"],
+		LoadTimeMsMean:             bySuffix["loadTimeMs_mean"],
+		LoadTimeMsMax:              bySuffix["loadTimeMs_max"],
+		WriteDataTimeMsMean:        bySuffix["writeDataTimeMs_mean"],
+		WriteDataTimeMsMax:         bySuffix["writeDataTimeMs_max"],
+		BeginTxnTimeMsMean:         bySuffix["beginTxnTimeMs_mean"],
+		CommitAndPublishTimeMsMean: bySuffix["commitAndPublishTimeMs_mean"],
+		PutDataTimeMsMean:          bySuffix["putDataTimeMs_mean"],
+	}, true
+}
+
+func summarizeDorisSinkMetrics(samples []DorisSinkMetricsSample) DorisSinkMetricsSummary {
+	summary := DorisSinkMetricsSummary{SampledSubtasks: make([]int, 0, len(samples))}
+	var perFlushRows []float64
+	var perFlushBytes []float64
+	var loadMeans []float64
+	var writeMeans []float64
+	var beginMeans []float64
+	var commitMeans []float64
+	for _, sample := range samples {
+		summary.SampledSubtasks = append(summary.SampledSubtasks, sample.Subtask)
+		summary.FlushSucceededTotal += sample.FlushSucceeded
+		summary.FlushFailedTotal += sample.FlushFailed
+		if sample.FlushSucceeded > 0 {
+			perFlushRows = append(perFlushRows, sample.FlushLoadedRows/sample.FlushSucceeded)
+			perFlushBytes = append(perFlushBytes, sample.FlushLoadBytes/sample.FlushSucceeded)
+		}
+		if sample.LoadTimeMsMean > 0 {
+			loadMeans = append(loadMeans, sample.LoadTimeMsMean)
+		}
+		if sample.LoadTimeMsMax > summary.LoadTimeMsMax {
+			summary.LoadTimeMsMax = sample.LoadTimeMsMax
+		}
+		if sample.WriteDataTimeMsMean > 0 {
+			writeMeans = append(writeMeans, sample.WriteDataTimeMsMean)
+		}
+		if sample.WriteDataTimeMsMax > summary.WriteDataTimeMsMax {
+			summary.WriteDataTimeMsMax = sample.WriteDataTimeMsMax
+		}
+		if sample.BeginTxnTimeMsMean > 0 {
+			beginMeans = append(beginMeans, sample.BeginTxnTimeMsMean)
+		}
+		if sample.CommitAndPublishTimeMsMean > 0 {
+			commitMeans = append(commitMeans, sample.CommitAndPublishTimeMsMean)
+		}
+	}
+	summary.PerFlushRowsMean = mean(perFlushRows)
+	summary.PerFlushBytesMean = mean(perFlushBytes)
+	summary.LoadTimeMsMean = mean(loadMeans)
+	summary.WriteDataTimeMsMean = mean(writeMeans)
+	summary.BeginTxnTimeMsMean = mean(beginMeans)
+	summary.CommitAndPublishTimeMsMean = mean(commitMeans)
+	return summary
+}
+
+func mean(values []float64) float64 {
+	if len(values) == 0 {
+		return 0
+	}
+	var sum float64
+	for _, value := range values {
+		sum += value
+	}
+	return sum / float64(len(values))
+}
+
+func parseMetricFloat(value string) (float64, bool) {
+	if value == "" {
+		return 0, false
+	}
+	parsed, err := strconv.ParseFloat(value, 64)
+	return parsed, err == nil
 }
 
 func nonJSONError(apiPath string, body []byte, err error) error {

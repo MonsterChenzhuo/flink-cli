@@ -38,7 +38,7 @@ Use `flink-cli` to query the Flink Web UI REST API and emit compact JSON for ana
    - `root_exception`, `job_failed`, `vertex_failed`: read `evidence.root_exception`, failed vertex evidence, then fetch JobManager/TaskManager logs or YARN diagnostics.
    - `checkpoint_failure_rate`, `checkpoint_slow`: check checkpoint storage, state backend, sink commit latency, alignment duration, and backpressure.
    - `backpressure_high`: follow the affected vertex downstream; inspect sink/external system latency, network buffers, and checkpoint alignment.
-   - `sink_busy_upstream_backpressure`: the sink may report `backpressure=ok` while upstream vertices are backpressured. Treat this as a sink/external-system throughput bottleneck. For Doris, inspect Stream Load `writeDataTimeMs`, `loadTimeMs`, batch size, checkpoint interval, and sink parallelism.
+   - `sink_busy_upstream_backpressure`: the sink may report `backpressure=ok` while upstream vertices are backpressured. Treat this as a sink/external-system throughput bottleneck. For Doris, first read `evidence.doris_sink_metrics.summary` for sampled `per_flush_*`, `load_time_ms_*`, and `write_data_time_ms_*`; then reason about Stream Load throughput, batch size, checkpoint interval, and sink parallelism.
    - `task_state_abnormal`: map failed tasks to their vertex and TaskManager logs.
    - `no_obvious_issue`: REST data does not show obvious job-level failure; continue with business throughput/latency, TaskManager logs, and external system metrics.
 

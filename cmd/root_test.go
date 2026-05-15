@@ -53,6 +53,12 @@ func TestDiagnoseCommandEmitsJSONEnvelope(t *testing.T) {
 	if _, ok := env["source_endpoints"].([]any); !ok {
 		t.Fatalf("source_endpoints missing from envelope: %s", stdout.String())
 	}
+	if _, ok := env["primary_finding"].(map[string]any); !ok {
+		t.Fatalf("primary_finding missing from envelope: %s", stdout.String())
+	}
+	if got, ok := env["diagnosis"].(string); !ok || got == "" {
+		t.Fatalf("diagnosis missing from envelope: %s", stdout.String())
+	}
 }
 
 func TestDiagnoseCommandIncludesSnapshotWhenRequested(t *testing.T) {
@@ -102,6 +108,32 @@ func TestDiagnoseCommandAcceptsHostPortURL(t *testing.T) {
 	}
 	if got, want := env["ui_url"], "http://"+server.Listener.Addr().String(); got != want {
 		t.Fatalf("ui_url = %v, want %v", got, want)
+	}
+}
+
+func TestDiagnoseCommandPassesJobIDFilter(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/jobs/overview", func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"jobs":[{"jid":"job-1","name":"skip","state":"RUNNING"},{"jid":"job-2","name":"target","state":"FAILED"}]}`))
+	})
+	mux.HandleFunc("/jobs/job-2", func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"jid":"job-2","name":"target","state":"FAILED","vertices":[]}`))
+	})
+	server := httptest.NewServer(mux)
+	defer server.Close()
+
+	var stdout, stderr bytes.Buffer
+	rc := RunWith(context.Background(), []string{"diagnose", "--job-id", "job-2", server.URL}, &stdout, &stderr)
+	if rc != 0 {
+		t.Fatalf("RunWith rc = %d, stderr = %s", rc, stderr.String())
+	}
+	var env map[string]any
+	if err := json.Unmarshal(stdout.Bytes(), &env); err != nil {
+		t.Fatalf("stdout is not JSON: %v\n%s", err, stdout.String())
+	}
+	summary := env["summary"].(map[string]any)
+	if got, want := summary["total_jobs"], float64(1); got != want {
+		t.Fatalf("total_jobs = %v, want %v", got, want)
 	}
 }
 

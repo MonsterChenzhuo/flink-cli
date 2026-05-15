@@ -24,6 +24,8 @@ Use `flink-cli` to query the Flink Web UI REST API and emit compact JSON for ana
    - `warnings`: non-fatal collection gaps.
    - `summary.jobs_by_state`: quick job state count.
    - `findings`: ordered by severity.
+   - `primary_finding`: the top finding to mention first.
+   - `diagnosis`: a one-line Chinese diagnosis for chat replies.
    - `next_actions`: recommended next diagnostic steps.
 
 3. Drill down by finding:
@@ -41,6 +43,15 @@ Use `flink-cli` to query the Flink Web UI REST API and emit compact JSON for ana
    ```
 
    Default output intentionally omits the raw snapshot to keep Claude Code/Codex context small.
+
+5. In multi-job or large-job sessions, narrow the scope:
+
+   ```bash
+   flink-cli diagnose --job-id <jobId> <flink-web-ui-url>
+   flink-cli diagnose --max-vertices 50 <flink-web-ui-url>
+   ```
+
+   `--max-vertices 0` disables the per-job backpressure collection limit.
 
 ## Input handling
 

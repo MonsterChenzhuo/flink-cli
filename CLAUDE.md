@@ -11,6 +11,7 @@
 ```bash
 flink-cli diagnose <flink-web-ui-url>
 flink-cli diagnose --include-snapshot <flink-web-ui-url>
+flink-cli diagnose --job-id <jobId> <flink-web-ui-url>
 ```
 
 示例：
@@ -69,11 +70,15 @@ stdout 输出 JSON envelope：
     }
   },
   "findings": [],
+  "primary_finding": {},
+  "diagnosis": "未发现明显作业级异常：未发现明显作业级异常",
   "next_actions": []
 }
 ```
 
 默认不输出完整 `snapshot`，避免 AI 上下文过大；只有用户或 agent 明确需要原始 REST 数据时才使用 `--include-snapshot`。
+
+大作业默认每个 job 最多对 20 个 vertex 请求 backpressure，避免 REST 调用过多和输出过大；需要全量时使用 `--max-vertices 0`。
 
 stderr 输出 JSON error：
 

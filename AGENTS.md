@@ -24,15 +24,24 @@ flink-cli diagnose --include-snapshot <flink-web-ui-url>
 
 `host:port` 会自动按 `http://host:port` 处理；gateway/proxy path 会被保留。
 
+多作业或大作业时优先缩小范围：
+
+```bash
+flink-cli diagnose --job-id <jobId> <flink-web-ui-url>
+flink-cli diagnose --max-vertices 50 <flink-web-ui-url>
+```
+
 ## 输出阅读顺序
 
 优先看：
 
 1. `summary.critical` / `summary.warn`
 2. `findings[]`
-3. `next_actions[]`
-4. `warnings[]`
-5. `source_endpoints[]`
+3. `primary_finding`
+4. `diagnosis`
+5. `next_actions[]`
+6. `warnings[]`
+7. `source_endpoints[]`
 
 不要因为 `flink-cli diagnose` 退出码是 `0` 就认为作业健康；作业健康状态看 `summary` 和 `findings`。
 

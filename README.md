@@ -82,6 +82,12 @@ https://nightlies.apache.org/flink/flink-docs-release-1.18/docs/ops/rest_api/
       "suggestion": "先查看 root_exception 和失败 vertex；如果异常来自 checkpoint 或 sink，优先排查外部存储、网络和状态后端。"
     }
   ],
+  "primary_finding": {
+    "rule_id": "job_failed",
+    "severity": "critical",
+    "title": "Flink 作业处于失败状态"
+  },
+  "diagnosis": "发现 critical 级别问题：Flink 作业处于失败状态",
   "next_actions": [
     "查看 finding.evidence.root_exception 或失败 vertex，并拉取对应 JobManager/TaskManager 日志确认最内层 cause。"
   ]
@@ -92,6 +98,16 @@ https://nightlies.apache.org/flink/flink-docs-release-1.18/docs/ops/rest_api/
 
 ```bash
 flink-cli diagnose --include-snapshot http://jobmanager-host:8081
+```
+
+多作业或大作业场景：
+
+```bash
+# 只诊断指定 job
+flink-cli diagnose --job-id <jobId> http://jobmanager-host:8081
+
+# 控制每个 job 采集 backpressure 的 vertex 数；0 表示不限制
+flink-cli diagnose --max-vertices 50 http://jobmanager-host:8081
 ```
 
 错误写到 stderr，格式也是 JSON：

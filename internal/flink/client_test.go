@@ -97,3 +97,66 @@ func TestClientCollectsJobSnapshot(t *testing.T) {
 		t.Fatalf("jobmanager config = %q, want %q", got, want)
 	}
 }
+
+func TestClientCollectsOnlyRequestedJobID(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/jobs/overview", func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"jobs":[{"jid":"job-1","name":"skip","state":"RUNNING"},{"jid":"job-2","name":"target","state":"FAILED"}]}`))
+	})
+	mux.HandleFunc("/jobs/job-2", func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"jid":"job-2","name":"target","state":"FAILED","vertices":[]}`))
+	})
+	server := httptest.NewServer(mux)
+	defer server.Close()
+
+	client, err := NewClient(server.URL)
+	if err != nil {
+		t.Fatalf("NewClient returned error: %v", err)
+	}
+	snapshot, err := client.CollectWithOptions(context.Background(), CollectOptions{JobID: "job-2"})
+	if err != nil {
+		t.Fatalf("CollectWithOptions returned error: %v", err)
+	}
+	if got, want := len(snapshot.Jobs), 1; got != want {
+		t.Fatalf("jobs length = %d, want %d", got, want)
+	}
+	if got, want := snapshot.Jobs[0].Overview.JID, "job-2"; got != want {
+		t.Fatalf("job id = %q, want %q", got, want)
+	}
+}
+
+func TestClientLimitsBackpressureCollectionByMaxVertices(t *testing.T) {
+	var backpressureCalls int
+	mux := http.NewServeMux()
+	mux.HandleFunc("/jobs/overview", func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"jobs":[{"jid":"job-1","name":"large","state":"RUNNING"}]}`))
+	})
+	mux.HandleFunc("/jobs/job-1", func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"jid":"job-1","name":"large","state":"RUNNING","vertices":[{"id":"v1","name":"a","status":"RUNNING"},{"id":"v2","name":"b","status":"RUNNING"},{"id":"v3","name":"c","status":"RUNNING"}]}`))
+	})
+	mux.HandleFunc("/jobs/job-1/vertices/v1/backpressure", func(w http.ResponseWriter, r *http.Request) {
+		backpressureCalls++
+		_, _ = w.Write([]byte(`{"status":"ok","backpressure-level":"ok"}`))
+	})
+	mux.HandleFunc("/jobs/job-1/vertices/v2/backpressure", func(w http.ResponseWriter, r *http.Request) {
+		backpressureCalls++
+		_, _ = w.Write([]byte(`{"status":"ok","backpressure-level":"ok"}`))
+	})
+	server := httptest.NewServer(mux)
+	defer server.Close()
+
+	client, err := NewClient(server.URL)
+	if err != nil {
+		t.Fatalf("NewClient returned error: %v", err)
+	}
+	snapshot, err := client.CollectWithOptions(context.Background(), CollectOptions{MaxVertices: 2})
+	if err != nil {
+		t.Fatalf("CollectWithOptions returned error: %v", err)
+	}
+	if got, want := backpressureCalls, 2; got != want {
+		t.Fatalf("backpressure calls = %d, want %d", got, want)
+	}
+	if len(snapshot.Warnings) == 0 {
+		t.Fatalf("expected warning about skipped vertices")
+	}
+}

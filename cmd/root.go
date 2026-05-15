@@ -31,6 +31,8 @@ type envelope struct {
 	Warnings        []string        `json:"warnings,omitempty"`
 	Summary         flink.Summary   `json:"summary"`
 	Findings        []flink.Finding `json:"findings"`
+	PrimaryFinding  *flink.Finding  `json:"primary_finding,omitempty"`
+	Diagnosis       string          `json:"diagnosis"`
 	NextActions     []string        `json:"next_actions"`
 	Snapshot        *flink.Snapshot `json:"snapshot,omitempty"`
 }
@@ -38,6 +40,8 @@ type envelope struct {
 type state struct {
 	timeout         time.Duration
 	includeSnapshot bool
+	jobID           string
+	maxVertices     int
 }
 
 func newRootCmd() *cobra.Command {
@@ -67,6 +71,8 @@ func newDiagnoseCmd(st *state) *cobra.Command {
 		},
 	}
 	c.Flags().BoolVar(&st.includeSnapshot, "include-snapshot", false, "include full collected REST snapshot in stdout")
+	c.Flags().StringVar(&st.jobID, "job-id", "", "diagnose only the matching Flink job id from /jobs/overview")
+	c.Flags().IntVar(&st.maxVertices, "max-vertices", 20, "maximum vertices per job to query for backpressure; 0 means no limit")
 	return c
 }
 
@@ -100,7 +106,7 @@ func runDiagnose(ctx context.Context, rawURL string, st state, stdout, stderr io
 		return 2
 	}
 	start := time.Now()
-	snapshot, err := client.Collect(ctx)
+	snapshot, err := client.CollectWithOptions(ctx, flink.CollectOptions{JobID: st.jobID, MaxVertices: st.maxVertices})
 	if err != nil {
 		apperr.WriteJSON(stderr, apperr.New("FLINK_API_UNREACHABLE", err.Error(), "确认 URL 可访问，并且指向 Flink 1.18 Web UI 根路径而不是具体页面路由"))
 		return 3
@@ -116,6 +122,8 @@ func runDiagnose(ctx context.Context, rawURL string, st state, stdout, stderr io
 		Warnings:        snapshot.Warnings,
 		Summary:         report.Summary,
 		Findings:        report.Findings,
+		PrimaryFinding:  primaryFinding(report),
+		Diagnosis:       buildDiagnosis(report),
 		NextActions:     buildNextActions(report),
 	}
 	if st.includeSnapshot {
@@ -126,6 +134,28 @@ func runDiagnose(ctx context.Context, rawURL string, st state, stdout, stderr io
 		return 1
 	}
 	return 0
+}
+
+func primaryFinding(report flink.Report) *flink.Finding {
+	if len(report.Findings) == 0 {
+		return nil
+	}
+	return &report.Findings[0]
+}
+
+func buildDiagnosis(report flink.Report) string {
+	if len(report.Findings) == 0 {
+		return "未发现可用诊断结果。"
+	}
+	primary := report.Findings[0]
+	switch primary.Severity {
+	case "critical":
+		return "发现 critical 级别问题：" + primary.Title
+	case "warn":
+		return "发现 warn 级别问题：" + primary.Title
+	default:
+		return "未发现明显作业级异常：" + primary.Title
+	}
 }
 
 func buildNextActions(report flink.Report) []string {

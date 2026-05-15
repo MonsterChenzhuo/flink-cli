@@ -2,7 +2,7 @@
 
 ## 项目目标
 
-`flink-cli` 用于诊断 Flink 1.18 YARN application 模式作业。用户输入 Flink Web UI URL，CLI 通过 Flink Web UI 背后的 REST API 获取运行细节，并输出适合 AI agent 继续分析的 JSON。
+`flink-cli` 用于诊断 Flink 1.18 YARN application 模式作业。用户输入 Flink Web UI URL，CLI 通过 Flink Web UI 背后的 REST API 获取运行细节，并输出适合 Claude Code / Codex 继续分析的紧凑 JSON。
 
 不要把它做成 Spark EventLog 解析器。Flink 初版只依赖 REST API，不读取 HDFS eventlog，也不直接抓 YARN container log。
 
@@ -10,6 +10,7 @@
 
 ```bash
 flink-cli diagnose <flink-web-ui-url>
+flink-cli diagnose --include-snapshot <flink-web-ui-url>
 ```
 
 示例：
@@ -22,6 +23,7 @@ flink-cli diagnose http://gateway.example.com/proxy/application_1730000000000_00
 URL 规范化规则：
 
 - 必须包含 scheme 和 host。
+- 也接受 `host:port`，会自动按 `http://host:port` 处理。
 - 去掉 query、fragment 和末尾 `/`。
 - 保留 gateway/proxy path，再拼接 REST path。
 - 例如 `http://gateway/proxy/application_1/` 会请求 `http://gateway/proxy/application_1/jobs/overview`。
@@ -55,6 +57,8 @@ stdout 输出 JSON envelope：
   "ui_url": "...",
   "flink_version": "1.18.1",
   "elapsed_ms": 123,
+  "source_endpoints": ["/jobs/overview"],
+  "warnings": [],
   "summary": {
     "critical": 0,
     "warn": 1,
@@ -65,9 +69,11 @@ stdout 输出 JSON envelope：
     }
   },
   "findings": [],
-  "snapshot": {}
+  "next_actions": []
 }
 ```
+
+默认不输出完整 `snapshot`，避免 AI 上下文过大；只有用户或 agent 明确需要原始 REST 数据时才使用 `--include-snapshot`。
 
 stderr 输出 JSON error：
 
@@ -105,6 +111,8 @@ stderr 输出 JSON error：
 - CLI 框架：Cobra。
 - 发布：push 到 `main` 后，`.github/workflows/release.yml` 会自动递增 patch tag，并用 GoReleaser 生成 GitHub Release 二进制包。
 - 安装：`scripts/install.sh` 从 latest release 下载当前 OS/arch 的 tar.gz，校验 checksum 后安装 `flink-cli`。
+- Skill：`.claude/skills/flink/SKILL.md` 会随 release 包分发，安装脚本默认同步到 `~/.claude/skills/flink`。如果用户只要二进制，可设置 `NO_SKILL=1`。
+- Codex：`AGENTS.md` 记录 Codex 侧的中文使用和开发约束，保持与本文件同步。
 - 主要包：
   - `cmd`：命令入口、退出码、JSON envelope。
   - `internal/flink`：URL 规范化、REST client、数据模型和诊断规则。

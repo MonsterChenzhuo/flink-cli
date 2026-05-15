@@ -4,6 +4,7 @@ type Snapshot struct {
 	UIURL            string            `json:"ui_url"`
 	FlinkVersion     string            `json:"flink_version,omitempty"`
 	FlinkRevision    string            `json:"flink_revision,omitempty"`
+	SourceEndpoints  []string          `json:"source_endpoints,omitempty"`
 	Jobs             []JobSnapshot     `json:"jobs"`
 	JobManagerConfig map[string]string `json:"jobmanager_config,omitempty"`
 	Warnings         []string          `json:"warnings,omitempty"`

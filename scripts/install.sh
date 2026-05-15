@@ -5,13 +5,16 @@
 # Env overrides:
 #   VERSION=v0.1.2                 pin a specific release (default: latest)
 #   PREFIX=/usr/local/bin          install directory for the binary
+#   SKILL_DIR=~/.claude/skills/flink install directory for the bundled Claude Code skill
 #   NO_SUDO=1                      never use sudo; fail if PREFIX is not writable
+#   NO_SKILL=1                     skip installing the bundled skill
 #   REPO=MonsterChenzhuo/flink-cli override repo slug
 
 set -euo pipefail
 
 REPO="${REPO:-MonsterChenzhuo/flink-cli}"
 PREFIX="${PREFIX:-/usr/local/bin}"
+SKILL_DIR="${SKILL_DIR:-$HOME/.claude/skills/flink}"
 VERSION="${VERSION:-}"
 
 info() { printf '\033[1;34m==>\033[0m %s\n' "$*" >&2; }
@@ -87,6 +90,13 @@ fi
 info "installing binary to ${PREFIX}/flink-cli"
 $sudo_cmd install -d "$PREFIX"
 $sudo_cmd install -m 0755 "${tmpdir}/flink-cli" "${PREFIX}/flink-cli"
+
+skill_src="${tmpdir}/.claude/skills/flink"
+if [ "${NO_SKILL:-0}" != "1" ] && [ -d "$skill_src" ]; then
+  info "installing Claude Code skill to ${SKILL_DIR}"
+  mkdir -p "$SKILL_DIR"
+  (cd "$skill_src" && tar -cf - .) | (cd "$SKILL_DIR" && tar -xf -)
+fi
 
 installed_version=$("${PREFIX}/flink-cli" version 2>/dev/null || echo "$VERSION")
 info "done: ${installed_version}"

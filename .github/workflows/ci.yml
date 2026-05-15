@@ -29,5 +29,9 @@ jobs:
       - name: docs present
         run: |
           test -f CLAUDE.md
+          test -f AGENTS.md
           test -f README.md
+          test -f .claude/skills/flink/SKILL.md
+          head -n 20 .claude/skills/flink/SKILL.md | grep -q '^name: '
+          head -n 20 .claude/skills/flink/SKILL.md | grep -q '^description: '
           grep -q 'flink-cli diagnose' README.md

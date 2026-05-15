@@ -20,6 +20,16 @@ func TestNormalizeBaseURLPreservesGatewayPath(t *testing.T) {
 	}
 }
 
+func TestNormalizeBaseURLDefaultsHTTPForHostPort(t *testing.T) {
+	base, err := NormalizeBaseURL("localhost:8081")
+	if err != nil {
+		t.Fatalf("NormalizeBaseURL returned error: %v", err)
+	}
+	if got, want := base.String(), "http://localhost:8081"; got != want {
+		t.Fatalf("base URL = %q, want %q", got, want)
+	}
+}
+
 func TestClientCollectsJobSnapshot(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/flink/jobs/overview", func(w http.ResponseWriter, r *http.Request) {

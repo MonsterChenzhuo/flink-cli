@@ -1,6 +1,6 @@
 # flink-cli
 
-`flink-cli` 是一个面向 AI agent 和运维人员的 Flink 诊断 CLI。用户只需要传入 Flink Web UI URL，工具会通过 Flink 1.18 REST API 拉取作业、异常、checkpoint、反压和配置摘要，并输出统一 JSON。
+`flink-cli` 是一个面向 Claude Code、Codex 和运维人员的 Flink 诊断 CLI。用户只需要传入 Flink Web UI URL，工具会通过 Flink 1.18 REST API 拉取作业、异常、checkpoint、反压和配置摘要，并输出紧凑 JSON。
 
 ## 快速开始
 
@@ -24,8 +24,8 @@ curl -fsSL https://raw.githubusercontent.com/MonsterChenzhuo/flink-cli/main/scri
 # 锁定版本
 curl -fsSL https://raw.githubusercontent.com/MonsterChenzhuo/flink-cli/main/scripts/install.sh | VERSION=v0.1.0 bash
 
-# 安装到无需 sudo 的路径
-curl -fsSL https://raw.githubusercontent.com/MonsterChenzhuo/flink-cli/main/scripts/install.sh | PREFIX="$HOME/.local/bin" NO_SUDO=1 bash
+# 安装到无需 sudo 的路径，并跳过 Claude Code skill
+curl -fsSL https://raw.githubusercontent.com/MonsterChenzhuo/flink-cli/main/scripts/install.sh | PREFIX="$HOME/.local/bin" NO_SUDO=1 NO_SKILL=1 bash
 ```
 
 YARN application 模式下，如果 Web UI 经过 gateway/proxy 暴露，也可以直接传带 path 的地址：
@@ -64,6 +64,7 @@ https://nightlies.apache.org/flink/flink-docs-release-1.18/docs/ops/rest_api/
   "ui_url": "http://jobmanager-host:8081",
   "flink_version": "1.18.1",
   "elapsed_ms": 120,
+  "source_endpoints": ["/jobs/overview", "/jobs/job-1"],
   "summary": {
     "critical": 1,
     "warn": 1,
@@ -80,8 +81,17 @@ https://nightlies.apache.org/flink/flink-docs-release-1.18/docs/ops/rest_api/
       "title": "Flink 作业处于失败状态",
       "suggestion": "先查看 root_exception 和失败 vertex；如果异常来自 checkpoint 或 sink，优先排查外部存储、网络和状态后端。"
     }
+  ],
+  "next_actions": [
+    "查看 finding.evidence.root_exception 或失败 vertex，并拉取对应 JobManager/TaskManager 日志确认最内层 cause。"
   ]
 }
+```
+
+默认输出不带完整 REST 快照，避免撑爆 AI 上下文。需要原始数据时：
+
+```bash
+flink-cli diagnose --include-snapshot http://jobmanager-host:8081
 ```
 
 错误写到 stderr，格式也是 JSON：
@@ -102,6 +112,7 @@ https://nightlies.apache.org/flink/flink-docs-release-1.18/docs/ops/rest_api/
 ```bash
 go test ./...
 go build ./...
+bash -n scripts/install.sh
 ```
 
 本地模拟 release 配置检查：

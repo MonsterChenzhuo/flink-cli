@@ -22,7 +22,9 @@ archives:
     files:
       - README.md
       - CLAUDE.md
+      - AGENTS.md
       - LICENSE
+      - .claude/skills/flink/SKILL.md
 checksum:
   name_template: "checksums.txt"
 changelog:

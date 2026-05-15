@@ -12,15 +12,22 @@ type BaseURL struct {
 }
 
 func NormalizeBaseURL(raw string) (BaseURL, error) {
-	if strings.TrimSpace(raw) == "" {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
 		return BaseURL{}, fmt.Errorf("empty Flink Web UI URL")
 	}
-	u, err := url.Parse(strings.TrimSpace(raw))
+	if !strings.Contains(raw, "://") {
+		raw = "http://" + raw
+	}
+	u, err := url.Parse(raw)
 	if err != nil {
 		return BaseURL{}, fmt.Errorf("parse Flink Web UI URL: %w", err)
 	}
 	if u.Scheme == "" || u.Host == "" {
 		return BaseURL{}, fmt.Errorf("Flink Web UI URL must include scheme and host")
+	}
+	if u.Scheme != "http" && u.Scheme != "https" {
+		return BaseURL{}, fmt.Errorf("Flink Web UI URL scheme must be http or https")
 	}
 	u.RawQuery = ""
 	u.Fragment = ""

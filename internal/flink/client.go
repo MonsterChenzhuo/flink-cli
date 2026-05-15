@@ -3,6 +3,7 @@ package flink
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"time"
@@ -37,13 +38,15 @@ func (c *Client) Collect(ctx context.Context) (Snapshot, error) {
 	}
 	s := Snapshot{
 		UIURL:            c.base.String(),
+		SourceEndpoints:  []string{"/jobs/overview"},
 		Jobs:             make([]JobSnapshot, 0, len(overview.Jobs)),
 		JobManagerConfig: map[string]string{},
 	}
 	var dashboard DashboardConfig
 	if err := c.getJSON(ctx, "/config", &dashboard); err != nil {
-		s.Warnings = append(s.Warnings, fmt.Sprintf("fetch dashboard config: %v", err))
+		s.addOptionalWarning("fetch dashboard config", err)
 	} else {
+		s.SourceEndpoints = append(s.SourceEndpoints, "/config")
 		s.FlinkVersion = dashboard.FlinkVersion
 		s.FlinkRevision = dashboard.FlinkRevision
 	}
@@ -51,11 +54,14 @@ func (c *Client) Collect(ctx context.Context) (Snapshot, error) {
 		js := JobSnapshot{Overview: job}
 		if err := c.getJSON(ctx, "/jobs/"+job.JID, &js.Detail); err != nil {
 			s.Warnings = append(s.Warnings, fmt.Sprintf("fetch job detail %s: %v", job.JID, err))
+		} else {
+			s.SourceEndpoints = append(s.SourceEndpoints, "/jobs/"+job.JID)
 		}
 		var jobCfg []configEntry
 		if err := c.getJSON(ctx, "/jobs/"+job.JID+"/jobmanager/config", &jobCfg); err != nil {
-			s.Warnings = append(s.Warnings, fmt.Sprintf("fetch job config %s: %v", job.JID, err))
+			s.addOptionalWarning(fmt.Sprintf("fetch job config %s", job.JID), err)
 		} else {
+			s.SourceEndpoints = append(s.SourceEndpoints, "/jobs/"+job.JID+"/jobmanager/config")
 			js.JobManagerConfig = map[string]string{}
 			for _, entry := range jobCfg {
 				js.JobManagerConfig[entry.Key] = entry.Value
@@ -65,28 +71,51 @@ func (c *Client) Collect(ctx context.Context) (Snapshot, error) {
 			vertex := &js.Detail.Vertices[i]
 			var bp BackpressureInfo
 			if err := c.getJSON(ctx, "/jobs/"+job.JID+"/vertices/"+vertex.ID+"/backpressure", &bp); err != nil {
-				s.Warnings = append(s.Warnings, fmt.Sprintf("fetch backpressure %s/%s: %v", job.JID, vertex.ID, err))
+				s.addOptionalWarning(fmt.Sprintf("fetch backpressure %s/%s", job.JID, vertex.ID), err)
 			} else {
+				s.SourceEndpoints = append(s.SourceEndpoints, "/jobs/"+job.JID+"/vertices/"+vertex.ID+"/backpressure")
 				vertex.Backpressure = &bp
 			}
 		}
 		if err := c.getJSON(ctx, "/jobs/"+job.JID+"/exceptions", &js.Exceptions); err != nil {
-			s.Warnings = append(s.Warnings, fmt.Sprintf("fetch exceptions %s: %v", job.JID, err))
+			s.addOptionalWarning(fmt.Sprintf("fetch exceptions %s", job.JID), err)
+		} else {
+			s.SourceEndpoints = append(s.SourceEndpoints, "/jobs/"+job.JID+"/exceptions")
 		}
 		if err := c.getJSON(ctx, "/jobs/"+job.JID+"/checkpoints", &js.Checkpoints); err != nil {
-			s.Warnings = append(s.Warnings, fmt.Sprintf("fetch checkpoints %s: %v", job.JID, err))
+			s.addOptionalWarning(fmt.Sprintf("fetch checkpoints %s", job.JID), err)
+		} else {
+			s.SourceEndpoints = append(s.SourceEndpoints, "/jobs/"+job.JID+"/checkpoints")
 		}
 		s.Jobs = append(s.Jobs, js)
 	}
 	var cfg []configEntry
 	if err := c.getJSON(ctx, "/jobmanager/config", &cfg); err != nil {
-		s.Warnings = append(s.Warnings, fmt.Sprintf("fetch jobmanager config: %v", err))
+		s.addOptionalWarning("fetch jobmanager config", err)
 	} else {
+		s.SourceEndpoints = append(s.SourceEndpoints, "/jobmanager/config")
 		for _, entry := range cfg {
 			s.JobManagerConfig[entry.Key] = entry.Value
 		}
 	}
 	return s, nil
+}
+
+func (s *Snapshot) addOptionalWarning(prefix string, err error) {
+	var httpErr *HTTPError
+	if errors.As(err, &httpErr) && httpErr.StatusCode == http.StatusNotFound {
+		return
+	}
+	s.Warnings = append(s.Warnings, fmt.Sprintf("%s: %v", prefix, err))
+}
+
+type HTTPError struct {
+	Path       string
+	StatusCode int
+}
+
+func (e *HTTPError) Error() string {
+	return fmt.Sprintf("GET %s returned HTTP %d", e.Path, e.StatusCode)
 }
 
 func (c *Client) getJSON(ctx context.Context, apiPath string, out any) error {
@@ -102,7 +131,7 @@ func (c *Client) getJSON(ctx context.Context, apiPath string, out any) error {
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return fmt.Errorf("GET %s returned HTTP %d", apiPath, resp.StatusCode)
+		return &HTTPError{Path: apiPath, StatusCode: resp.StatusCode}
 	}
 	if err := json.NewDecoder(resp.Body).Decode(out); err != nil {
 		return fmt.Errorf("decode %s: %w", apiPath, err)

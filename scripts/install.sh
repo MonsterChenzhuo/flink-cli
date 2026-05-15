@@ -35,6 +35,19 @@ need curl
 need tar
 need uname
 
+abs_path() {
+  local target="$1"
+  local dir
+  dir=$(dirname "$target")
+  local base
+  base=$(basename "$target")
+  if [ -d "$dir" ]; then
+    (cd "$dir" && printf '%s/%s\n' "$(pwd -P)" "$base")
+  else
+    printf '%s\n' "$target"
+  fi
+}
+
 can_install_without_sudo() {
   local path="$1"
   if [ -d "$path" ]; then
@@ -140,4 +153,21 @@ fi
 
 installed_version=$("${PREFIX}/flink-cli" version 2>/dev/null || echo "$VERSION")
 info "done: ${installed_version}"
-info "run: flink-cli --help"
+
+installed_path=$(abs_path "${PREFIX}/flink-cli")
+resolved_path=$(command -v flink-cli 2>/dev/null || true)
+if [ -z "$resolved_path" ]; then
+  warn "flink-cli is installed at ${installed_path}, but no flink-cli command is currently on PATH"
+  warn "add ${PREFIX} to PATH, or run: ${installed_path} --help"
+else
+  resolved_path=$(abs_path "$resolved_path")
+  if [ "$resolved_path" != "$installed_path" ]; then
+    resolved_version=$("$resolved_path" version 2>/dev/null || "$resolved_path" -v 2>/dev/null || echo "unknown")
+    warn "PATH currently resolves flink-cli to ${resolved_path}, not ${installed_path}"
+    warn "active flink-cli version is: ${resolved_version}"
+    warn "run the installed binary directly: ${installed_path} --help"
+    warn "or put ${PREFIX} before $(dirname "$resolved_path") in PATH, then run: hash -r"
+  else
+    info "run: flink-cli --help"
+  fi
+fi

@@ -70,6 +70,18 @@ esac
 EOF
 chmod +x "${stub_bin}/curl"
 
+old_bin="${tmpdir}/old-bin"
+mkdir -p "$old_bin"
+cat >"${old_bin}/flink-cli" <<'EOF'
+#!/usr/bin/env bash
+if [ "${1:-}" = "version" ] || [ "${1:-}" = "-v" ]; then
+  echo "flink-cli 0.0.old"
+else
+  echo "old flink-cli"
+fi
+EOF
+chmod +x "${old_bin}/flink-cli"
+
 prefix="${tmpdir}/prefix"
 skill_dir="${tmpdir}/claude-skill"
 agents_skill_dir="${tmpdir}/agents-skill"
@@ -79,7 +91,7 @@ mkdir -p "$prefix"
 
 stderr="${tmpdir}/install.err"
 set +e
-PATH="${stub_bin}:$PATH" \
+PATH="${stub_bin}:${old_bin}:$PATH" \
 LANG=bad_locale \
 LC_ALL=bad_locale \
 VERSION="$version" \
@@ -107,6 +119,12 @@ test -f "${skill_dir}/SKILL.md"
 test -f "${agents_skill_dir}/SKILL.md"
 test -f "${codex_skill_dir}/SKILL.md"
 test -f "${command_dir}/flink.md"
+
+if ! grep -q 'PATH currently resolves flink-cli' "$stderr"; then
+  cat "$stderr" >&2
+  printf 'expected PATH conflict warning\n' >&2
+  exit 1
+fi
 
 default_home="${tmpdir}/default-home"
 mkdir -p "$default_home"

@@ -37,6 +37,20 @@ curl -fsSL https://raw.githubusercontent.com/MonsterChenzhuo/flink-cli/main/scri
 
 注意：`/flink` 是 Claude Code slash command。Codex 当前通过 skill / AGENTS 发现能力，不读取 `~/.claude/commands`；安装后需要新开 Codex 会话才能看到新 skill。
 
+安装脚本默认把二进制安装到 `~/.local/bin/flink-cli`。如果机器上已有 `/usr/local/bin/flink-cli` 等旧版本，并且它在 `PATH` 里更靠前，直接执行 `flink-cli -v` 仍会看到旧版本。安装脚本会检测这种冲突并给出 warning；可用下面任一方式处理：
+
+```bash
+# 临时验证刚安装的版本
+~/.local/bin/flink-cli -v
+
+# 让当前 shell 优先使用 ~/.local/bin
+export PATH="$HOME/.local/bin:$PATH"
+hash -r
+
+# 或直接覆盖安装到当前优先路径
+curl -fsSL https://raw.githubusercontent.com/MonsterChenzhuo/flink-cli/main/scripts/install.sh | PREFIX="/usr/local/bin" bash
+```
+
 YARN application 模式下，如果 Web UI 经过 gateway/proxy 暴露，也可以直接传带 path 的地址：
 
 ```bash

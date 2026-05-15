@@ -30,6 +30,7 @@ warn() { printf '\033[1;33m!!\033[0m %s\n' "$*" >&2; }
 die()  { printf '\033[1;31mxx\033[0m %s\n' "$*" >&2; exit 1; }
 
 need() { command -v "$1" >/dev/null 2>&1 || die "missing required tool: $1"; }
+tar_cmd() { LC_ALL=C LANG=C tar "$@"; }
 need curl
 need tar
 need uname
@@ -83,7 +84,7 @@ if [ -s "${tmpdir}/${checksums}" ]; then
 fi
 
 info "extracting"
-tar -xzf "${tmpdir}/${archive}" -C "${tmpdir}"
+tar_cmd -xzf "${tmpdir}/${archive}" -C "${tmpdir}"
 [ -x "${tmpdir}/flink-cli" ] || die "binary not found in archive"
 
 sudo_cmd=""
@@ -103,17 +104,17 @@ skill_src="${tmpdir}/.claude/skills/flink"
 if [ "${NO_SKILL:-0}" != "1" ] && [ -d "$skill_src" ]; then
   info "installing Claude Code skill to ${SKILL_DIR}"
   mkdir -p "$SKILL_DIR"
-  (cd "$skill_src" && tar -cf - .) | (cd "$SKILL_DIR" && tar -xf -)
+  (cd "$skill_src" && tar_cmd -cf - .) | (cd "$SKILL_DIR" && tar_cmd -xf -)
 fi
 
 if [ "${NO_CODEX_SKILL:-0}" != "1" ] && [ -d "$skill_src" ]; then
   info "installing Codex skill to ${AGENTS_SKILL_DIR}"
   mkdir -p "$AGENTS_SKILL_DIR"
-  (cd "$skill_src" && tar -cf - .) | (cd "$AGENTS_SKILL_DIR" && tar -xf -)
+  (cd "$skill_src" && tar_cmd -cf - .) | (cd "$AGENTS_SKILL_DIR" && tar_cmd -xf -)
 
   info "installing Codex-local skill copy to ${CODEX_SKILL_DIR}"
   mkdir -p "$CODEX_SKILL_DIR"
-  (cd "$skill_src" && tar -cf - .) | (cd "$CODEX_SKILL_DIR" && tar -xf -)
+  (cd "$skill_src" && tar_cmd -cf - .) | (cd "$CODEX_SKILL_DIR" && tar_cmd -xf -)
 fi
 
 command_src="${tmpdir}/.claude/commands/flink.md"

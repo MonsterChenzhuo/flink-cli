@@ -25,6 +25,7 @@ archives:
       - AGENTS.md
       - LICENSE
       - .claude/skills/flink/SKILL.md
+      - .claude/commands/flink.md
 checksum:
   name_template: "checksums.txt"
 changelog:

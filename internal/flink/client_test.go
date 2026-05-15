@@ -2,6 +2,7 @@ package flink
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -122,6 +123,57 @@ func TestClientCollectsOnlyRequestedJobID(t *testing.T) {
 	}
 	if got, want := snapshot.Jobs[0].Overview.JID, "job-2"; got != want {
 		t.Fatalf("job id = %q, want %q", got, want)
+	}
+}
+
+func TestClientReturnsJobNotFoundForRequestedJobID(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/jobs/overview", func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"jobs":[{"jid":"job-1","name":"orders","state":"RUNNING"}]}`))
+	})
+	server := httptest.NewServer(mux)
+	defer server.Close()
+
+	client, err := NewClient(server.URL)
+	if err != nil {
+		t.Fatalf("NewClient returned error: %v", err)
+	}
+	_, err = client.CollectWithOptions(context.Background(), CollectOptions{JobID: "missing"})
+	if err == nil {
+		t.Fatalf("expected error for missing job id")
+	}
+	var nf *JobNotFoundError
+	if !errors.As(err, &nf) {
+		t.Fatalf("error = %T %[1]v, want *JobNotFoundError", err)
+	}
+}
+
+func TestClientListJobsOnlyFetchesOverview(t *testing.T) {
+	detailCalled := false
+	mux := http.NewServeMux()
+	mux.HandleFunc("/jobs/overview", func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"jobs":[{"jid":"job-1","name":"orders","state":"RUNNING"}]}`))
+	})
+	mux.HandleFunc("/jobs/job-1", func(w http.ResponseWriter, r *http.Request) {
+		detailCalled = true
+		w.WriteHeader(http.StatusInternalServerError)
+	})
+	server := httptest.NewServer(mux)
+	defer server.Close()
+
+	client, err := NewClient(server.URL)
+	if err != nil {
+		t.Fatalf("NewClient returned error: %v", err)
+	}
+	jobs, err := client.ListJobs(context.Background())
+	if err != nil {
+		t.Fatalf("ListJobs returned error: %v", err)
+	}
+	if detailCalled {
+		t.Fatalf("ListJobs should not fetch job details")
+	}
+	if got, want := len(jobs), 1; got != want {
+		t.Fatalf("jobs length = %d, want %d", got, want)
 	}
 }
 

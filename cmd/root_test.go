@@ -137,6 +137,90 @@ func TestDiagnoseCommandPassesJobIDFilter(t *testing.T) {
 	}
 }
 
+func TestDiagnoseCommandReturnsUserErrorWhenJobIDMissing(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/jobs/overview", func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"jobs":[{"jid":"job-1","name":"orders","state":"RUNNING"}]}`))
+	})
+	server := httptest.NewServer(mux)
+	defer server.Close()
+
+	var stdout, stderr bytes.Buffer
+	rc := RunWith(context.Background(), []string{"diagnose", "--job-id", "missing", server.URL}, &stdout, &stderr)
+	if rc != 2 {
+		t.Fatalf("RunWith rc = %d, want 2; stderr = %s", rc, stderr.String())
+	}
+	var env map[string]map[string]any
+	if err := json.Unmarshal(stderr.Bytes(), &env); err != nil {
+		t.Fatalf("stderr is not JSON: %v\n%s", err, stderr.String())
+	}
+	if got, want := env["error"]["code"], "JOB_NOT_FOUND"; got != want {
+		t.Fatalf("error code = %v, want %v", got, want)
+	}
+}
+
+func TestDiagnoseCommandListJobs(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/jobs/overview", func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"jobs":[{"jid":"job-1","name":"orders","state":"RUNNING"}]}`))
+	})
+	server := httptest.NewServer(mux)
+	defer server.Close()
+
+	var stdout, stderr bytes.Buffer
+	rc := RunWith(context.Background(), []string{"diagnose", "--list-jobs", server.URL}, &stdout, &stderr)
+	if rc != 0 {
+		t.Fatalf("RunWith rc = %d, stderr = %s", rc, stderr.String())
+	}
+	var env map[string]any
+	if err := json.Unmarshal(stdout.Bytes(), &env); err != nil {
+		t.Fatalf("stdout is not JSON: %v\n%s", err, stdout.String())
+	}
+	if got, want := env["scenario"], "list-jobs"; got != want {
+		t.Fatalf("scenario = %v, want %v", got, want)
+	}
+	if _, ok := env["jobs"].([]any); !ok {
+		t.Fatalf("jobs missing from envelope: %s", stdout.String())
+	}
+}
+
+func TestDiagnoseCommandQuietWarningsSummarizesWarnings(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/jobs/overview", func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"jobs":[{"jid":"job-1","name":"orders","state":"RUNNING","tasks":{"total":1,"running":1}}]}`))
+	})
+	mux.HandleFunc("/jobs/job-1", func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"jid":"job-1","name":"orders","state":"RUNNING","vertices":[]}`))
+	})
+	mux.HandleFunc("/jobs/job-1/exceptions", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	})
+	mux.HandleFunc("/jobs/job-1/checkpoints", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	})
+	server := httptest.NewServer(mux)
+	defer server.Close()
+
+	var stdout, stderr bytes.Buffer
+	rc := RunWith(context.Background(), []string{"diagnose", "--quiet-warnings", server.URL}, &stdout, &stderr)
+	if rc != 0 {
+		t.Fatalf("RunWith rc = %d, stderr = %s", rc, stderr.String())
+	}
+	var env map[string]any
+	if err := json.Unmarshal(stdout.Bytes(), &env); err != nil {
+		t.Fatalf("stdout is not JSON: %v\n%s", err, stdout.String())
+	}
+	if _, ok := env["warnings"]; ok {
+		t.Fatalf("warnings should be omitted with --quiet-warnings: %s", stdout.String())
+	}
+	if got, ok := env["warnings_count"].(float64); !ok || got == 0 {
+		t.Fatalf("warnings_count missing: %s", stdout.String())
+	}
+	if got, ok := env["warnings_hint"].(string); !ok || got == "" {
+		t.Fatalf("warnings_hint missing: %s", stdout.String())
+	}
+}
+
 func TestDiagnoseCommandReturnsUserErrorForInvalidURL(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	rc := RunWith(context.Background(), []string{"diagnose", "://bad"}, &stdout, &stderr)

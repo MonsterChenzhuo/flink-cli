@@ -24,6 +24,8 @@ flink-cli diagnose --include-snapshot <flink-web-ui-url>
 
 `host:port` 会自动按 `http://host:port` 处理；gateway/proxy path 会被保留。
 
+Claude Code 的 `/flink` 来自 `.claude/commands/flink.md`，安装脚本默认安装到 `~/.claude/commands/flink.md`。如果只装了 skill，Claude Code 不会自动出现 `/flink` slash command。
+
 多作业或大作业时优先缩小范围：
 
 ```bash

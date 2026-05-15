@@ -19,6 +19,15 @@ type CollectOptions struct {
 	MaxVertices int
 }
 
+type JobNotFoundError struct {
+	JobID        string
+	AvailableIDs []string
+}
+
+func (e *JobNotFoundError) Error() string {
+	return fmt.Sprintf("job %q not found in /jobs/overview", e.JobID)
+}
+
 func NewClient(rawURL string) (*Client, error) {
 	return NewClientWithHTTP(rawURL, &http.Client{Timeout: 30 * time.Second})
 }
@@ -36,6 +45,16 @@ func NewClientWithHTTP(rawURL string, hc *http.Client) (*Client, error) {
 
 func (c *Client) Collect(ctx context.Context) (Snapshot, error) {
 	return c.CollectWithOptions(ctx, CollectOptions{})
+}
+
+func (c *Client) ListJobs(ctx context.Context) ([]JobOverview, error) {
+	var overview struct {
+		Jobs []JobOverview `json:"jobs"`
+	}
+	if err := c.getJSON(ctx, "/jobs/overview", &overview); err != nil {
+		return nil, err
+	}
+	return overview.Jobs, nil
 }
 
 func (c *Client) CollectWithOptions(ctx context.Context, opts CollectOptions) (Snapshot, error) {
@@ -59,7 +78,11 @@ func (c *Client) CollectWithOptions(ctx context.Context, opts CollectOptions) (S
 		s.FlinkVersion = dashboard.FlinkVersion
 		s.FlinkRevision = dashboard.FlinkRevision
 	}
-	for _, job := range filterJobs(overview.Jobs, opts.JobID) {
+	jobs, err := filterJobs(overview.Jobs, opts.JobID)
+	if err != nil {
+		return Snapshot{}, err
+	}
+	for _, job := range jobs {
 		js := JobSnapshot{Overview: job}
 		if err := c.getJSON(ctx, "/jobs/"+job.JID, &js.Detail); err != nil {
 			s.Warnings = append(s.Warnings, fmt.Sprintf("fetch job detail %s: %v", job.JID, err))
@@ -118,17 +141,22 @@ func (c *Client) CollectWithOptions(ctx context.Context, opts CollectOptions) (S
 	return s, nil
 }
 
-func filterJobs(jobs []JobOverview, jobID string) []JobOverview {
+func filterJobs(jobs []JobOverview, jobID string) ([]JobOverview, error) {
 	if jobID == "" {
-		return jobs
+		return jobs, nil
 	}
 	out := make([]JobOverview, 0, 1)
+	available := make([]string, 0, len(jobs))
 	for _, job := range jobs {
+		available = append(available, job.JID)
 		if job.JID == jobID {
 			out = append(out, job)
 		}
 	}
-	return out
+	if len(out) == 0 {
+		return nil, &JobNotFoundError{JobID: jobID, AvailableIDs: available}
+	}
+	return out, nil
 }
 
 func (s *Snapshot) addOptionalWarning(prefix string, err error) {

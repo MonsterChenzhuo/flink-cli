@@ -32,6 +32,7 @@ jobs:
           test -f AGENTS.md
           test -f README.md
           test -f .claude/skills/flink/SKILL.md
+          test -f .claude/commands/flink.md
           head -n 20 .claude/skills/flink/SKILL.md | grep -q '^name: '
           head -n 20 .claude/skills/flink/SKILL.md | grep -q '^description: '
           grep -q 'flink-cli diagnose' README.md

@@ -117,6 +117,7 @@ stderr 输出 JSON error：
 - 发布：push 到 `main` 后，`.github/workflows/release.yml` 会自动递增 patch tag，并用 GoReleaser 生成 GitHub Release 二进制包。
 - 安装：`scripts/install.sh` 从 latest release 下载当前 OS/arch 的 tar.gz，校验 checksum 后安装 `flink-cli`。
 - Skill：`.claude/skills/flink/SKILL.md` 会随 release 包分发，安装脚本默认同步到 `~/.claude/skills/flink`。如果用户只要二进制，可设置 `NO_SKILL=1`。
+- Slash command：`.claude/commands/flink.md` 会随 release 包分发，安装脚本默认同步到 `~/.claude/commands/flink.md`，对应 Claude Code 里的 `/flink`。如果不需要，可设置 `NO_COMMAND=1`。
 - Codex：`AGENTS.md` 记录 Codex 侧的中文使用和开发约束，保持与本文件同步。
 - 主要包：
   - `cmd`：命令入口、退出码、JSON envelope。

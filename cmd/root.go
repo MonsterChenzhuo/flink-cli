@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"context"
+	"errors"
 	"io"
 	"net/http"
 	"os"
@@ -29,6 +30,8 @@ type envelope struct {
 	ElapsedMs       int64           `json:"elapsed_ms"`
 	SourceEndpoints []string        `json:"source_endpoints"`
 	Warnings        []string        `json:"warnings,omitempty"`
+	WarningsCount   int             `json:"warnings_count,omitempty"`
+	WarningsHint    string          `json:"warnings_hint,omitempty"`
 	Summary         flink.Summary   `json:"summary"`
 	Findings        []flink.Finding `json:"findings"`
 	PrimaryFinding  *flink.Finding  `json:"primary_finding,omitempty"`
@@ -42,6 +45,18 @@ type state struct {
 	includeSnapshot bool
 	jobID           string
 	maxVertices     int
+	listJobs        bool
+	quietWarnings   bool
+}
+
+type listJobsEnvelope struct {
+	SchemaVersion   string              `json:"schema_version"`
+	Scenario        string              `json:"scenario"`
+	UIURL           string              `json:"ui_url"`
+	ElapsedMs       int64               `json:"elapsed_ms"`
+	SourceEndpoints []string            `json:"source_endpoints"`
+	Jobs            []flink.JobOverview `json:"jobs"`
+	NextActions     []string            `json:"next_actions"`
 }
 
 func newRootCmd() *cobra.Command {
@@ -71,6 +86,8 @@ func newDiagnoseCmd(st *state) *cobra.Command {
 		},
 	}
 	c.Flags().BoolVar(&st.includeSnapshot, "include-snapshot", false, "include full collected REST snapshot in stdout")
+	c.Flags().BoolVar(&st.listJobs, "list-jobs", false, "only list jobs from /jobs/overview without fetching job details")
+	c.Flags().BoolVar(&st.quietWarnings, "quiet-warnings", false, "omit warning details and keep only warning count/hint")
 	c.Flags().StringVar(&st.jobID, "job-id", "", "diagnose only the matching Flink job id from /jobs/overview")
 	c.Flags().IntVar(&st.maxVertices, "max-vertices", 20, "maximum vertices per job to query for backpressure; 0 means no limit")
 	return c
@@ -106,8 +123,16 @@ func runDiagnose(ctx context.Context, rawURL string, st state, stdout, stderr io
 		return 2
 	}
 	start := time.Now()
+	if st.listJobs {
+		return runListJobs(ctx, client, rawURL, start, stdout, stderr)
+	}
 	snapshot, err := client.CollectWithOptions(ctx, flink.CollectOptions{JobID: st.jobID, MaxVertices: st.maxVertices})
 	if err != nil {
+		var nf *flink.JobNotFoundError
+		if errors.As(err, &nf) {
+			apperr.WriteJSON(stderr, apperr.New("JOB_NOT_FOUND", err.Error(), "先运行 `flink-cli diagnose <url>` 查看 summary.jobs_by_state，或确认 --job-id 是否来自 /jobs/overview"))
+			return 2
+		}
 		apperr.WriteJSON(stderr, apperr.New("FLINK_API_UNREACHABLE", err.Error(), "确认 URL 可访问，并且指向 Flink 1.18 Web UI 根路径而不是具体页面路由"))
 		return 3
 	}
@@ -119,7 +144,6 @@ func runDiagnose(ctx context.Context, rawURL string, st state, stdout, stderr io
 		FlinkVersion:    snapshot.FlinkVersion,
 		ElapsedMs:       time.Since(start).Milliseconds(),
 		SourceEndpoints: snapshot.SourceEndpoints,
-		Warnings:        snapshot.Warnings,
 		Summary:         report.Summary,
 		Findings:        report.Findings,
 		PrimaryFinding:  primaryFinding(report),
@@ -128,6 +152,45 @@ func runDiagnose(ctx context.Context, rawURL string, st state, stdout, stderr io
 	}
 	if st.includeSnapshot {
 		env.Snapshot = &report.Snapshot
+	}
+	attachWarnings(&env, snapshot.Warnings, st.quietWarnings)
+	if err := output.WriteJSON(stdout, env); err != nil {
+		apperr.WriteJSON(stderr, apperr.New("OUTPUT_ERROR", err.Error(), "检查 stdout 是否可写"))
+		return 1
+	}
+	return 0
+}
+
+func attachWarnings(env *envelope, warnings []string, quiet bool) {
+	if len(warnings) == 0 {
+		return
+	}
+	if quiet {
+		env.WarningsCount = len(warnings)
+		env.WarningsHint = "非致命采集 warning 已隐藏；去掉 --quiet-warnings 可查看完整 warning。"
+		return
+	}
+	env.Warnings = warnings
+}
+
+func runListJobs(ctx context.Context, client *flink.Client, rawURL string, start time.Time, stdout, stderr io.Writer) int {
+	jobs, err := client.ListJobs(ctx)
+	if err != nil {
+		apperr.WriteJSON(stderr, apperr.New("FLINK_API_UNREACHABLE", err.Error(), "确认 URL 可访问，并且 /jobs/overview 可读取"))
+		return 3
+	}
+	base, _ := flink.NormalizeBaseURL(rawURL)
+	env := listJobsEnvelope{
+		SchemaVersion:   "v1",
+		Scenario:        "list-jobs",
+		UIURL:           base.String(),
+		ElapsedMs:       time.Since(start).Milliseconds(),
+		SourceEndpoints: []string{"/jobs/overview"},
+		Jobs:            jobs,
+		NextActions: []string{
+			"选择目标 jobs[].jid 后执行：flink-cli diagnose --job-id <jobId> <url>。",
+			"如果只看到历史完成作业，确认当前 URL 指向正在服务该 application 的 Flink Web UI。",
+		},
 	}
 	if err := output.WriteJSON(stdout, env); err != nil {
 		apperr.WriteJSON(stderr, apperr.New("OUTPUT_ERROR", err.Error(), "检查 stdout 是否可写"))

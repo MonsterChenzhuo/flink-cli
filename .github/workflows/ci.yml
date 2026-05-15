@@ -1,0 +1,33 @@
+name: ci
+on: [push, pull_request]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - run: go mod download
+      - name: tidy is clean
+        run: |
+          go mod tidy
+          git diff --exit-code -- go.mod go.sum
+      - run: go vet ./...
+      - name: gofmt
+        run: test -z "$(gofmt -l .)"
+      - name: unit tests
+        run: go test -race -count=1 ./...
+      - name: build
+        run: go build -ldflags "-s -w -X github.com/MonsterChenzhuo/flink-cli/cmd.version=ci -X github.com/MonsterChenzhuo/flink-cli/cmd.commit=${GITHUB_SHA} -X github.com/MonsterChenzhuo/flink-cli/cmd.date=$(date -u +%Y-%m-%dT%H:%M:%SZ)" -o flink-cli .
+      - name: smoke
+        run: |
+          ./flink-cli --help
+          ./flink-cli version
+      - name: docs present
+        run: |
+          test -f CLAUDE.md
+          test -f README.md
+          grep -q 'flink-cli diagnose' README.md

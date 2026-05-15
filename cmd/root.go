@@ -14,7 +14,11 @@ import (
 	"github.com/MonsterChenzhuo/flink-cli/internal/output"
 )
 
-var version = "dev"
+var (
+	version = "dev"
+	commit  = "none"
+	date    = "unknown"
+)
 var exitCode int
 
 type envelope struct {

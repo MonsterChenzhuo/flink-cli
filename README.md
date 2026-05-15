@@ -8,6 +8,26 @@
 flink-cli diagnose http://jobmanager-host:8081
 ```
 
+## 一键安装 / 升级
+
+每次代码 push 到 `main` 后，GitHub Actions 会自动递增 patch tag，并通过 GoReleaser 生成 `darwin/linux`、`amd64/arm64` 的二进制包。
+
+安装或升级到 latest release：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/MonsterChenzhuo/flink-cli/main/scripts/install.sh | bash
+```
+
+常用覆盖：
+
+```bash
+# 锁定版本
+curl -fsSL https://raw.githubusercontent.com/MonsterChenzhuo/flink-cli/main/scripts/install.sh | VERSION=v0.1.0 bash
+
+# 安装到无需 sudo 的路径
+curl -fsSL https://raw.githubusercontent.com/MonsterChenzhuo/flink-cli/main/scripts/install.sh | PREFIX="$HOME/.local/bin" NO_SUDO=1 bash
+```
+
 YARN application 模式下，如果 Web UI 经过 gateway/proxy 暴露，也可以直接传带 path 的地址：
 
 ```bash
@@ -82,4 +102,10 @@ https://nightlies.apache.org/flink/flink-docs-release-1.18/docs/ops/rest_api/
 ```bash
 go test ./...
 go build ./...
+```
+
+本地模拟 release 配置检查：
+
+```bash
+goreleaser check
 ```

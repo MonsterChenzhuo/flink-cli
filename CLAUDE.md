@@ -103,6 +103,8 @@ stderr 输出 JSON error：
 
 - 语言：Go 1.22。
 - CLI 框架：Cobra。
+- 发布：push 到 `main` 后，`.github/workflows/release.yml` 会自动递增 patch tag，并用 GoReleaser 生成 GitHub Release 二进制包。
+- 安装：`scripts/install.sh` 从 latest release 下载当前 OS/arch 的 tar.gz，校验 checksum 后安装 `flink-cli`。
 - 主要包：
   - `cmd`：命令入口、退出码、JSON envelope。
   - `internal/flink`：URL 规范化、REST client、数据模型和诊断规则。
@@ -113,7 +115,10 @@ stderr 输出 JSON error：
 ```bash
 go test ./...
 go build ./...
+bash -n scripts/install.sh
 ```
+
+CI 参考 `spark-cli`：`.github/workflows/ci.yml` 负责 `go mod tidy`、`go vet`、`gofmt`、race test、build 和 smoke；`.github/workflows/release.yml` 负责自动打 tag 和 GoReleaser 发布。
 
 ## 已知边界
 

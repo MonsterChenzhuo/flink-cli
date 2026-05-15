@@ -1,0 +1,31 @@
+version: 2
+project_name: flink-cli
+before:
+  hooks:
+    - go mod tidy
+builds:
+  - id: flink-cli
+    main: ./
+    binary: flink-cli
+    env: [CGO_ENABLED=0]
+    goos: [darwin, linux]
+    goarch: [amd64, arm64]
+    ldflags:
+      - -s -w
+      - -X github.com/MonsterChenzhuo/flink-cli/cmd.version={{.Version}}
+      - -X github.com/MonsterChenzhuo/flink-cli/cmd.commit={{.Commit}}
+      - -X github.com/MonsterChenzhuo/flink-cli/cmd.date={{.Date}}
+archives:
+  - id: default
+    formats: [tar.gz]
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    files:
+      - README.md
+      - CLAUDE.md
+      - LICENSE
+checksum:
+  name_template: "checksums.txt"
+changelog:
+  use: github
+release:
+  draft: false

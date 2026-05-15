@@ -70,7 +70,7 @@ func TestClientCollectsJobSnapshot(t *testing.T) {
 	})
 	mux.HandleFunc("/flink/jobs/job-1/checkpoints", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(`{"counts":{"restored":0,"total":3,"in_progress":0,"completed":3,"failed":0},"latest":{"completed":{"id":3,"status":"COMPLETED","end_to_end_duration":1200}}}`))
+		_, _ = w.Write([]byte(`{"counts":{"restored":0,"total":3,"in_progress":0,"completed":3,"failed":0},"summary":{"end_to_end_duration":{"avg":1200,"max":1500},"alignment_buffered":{"avg":0,"max":0},"state_size":{"avg":1024,"max":2048}},"latest":{"completed":{"id":3,"status":"COMPLETED","end_to_end_duration":1200,"alignment_buffered":0,"state_size":1024}}}`))
 	})
 	mux.HandleFunc("/flink/jobmanager/config", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
@@ -111,6 +111,9 @@ func TestClientCollectsJobSnapshot(t *testing.T) {
 	}
 	if got, want := snapshot.JobManagerConfig["parallelism.default"], "2"; got != want {
 		t.Fatalf("jobmanager config = %q, want %q", got, want)
+	}
+	if got, want := snapshot.Jobs[0].Checkpoints.Summary.EndToEndDuration.Avg, float64(1200); got != want {
+		t.Fatalf("checkpoint duration avg = %v, want %v", got, want)
 	}
 }
 

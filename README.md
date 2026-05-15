@@ -59,7 +59,7 @@ http://gateway.example.com/proxy/application_xxx/jobs/overview
 - `/jobs/:jobid`：作业详情和 vertex 列表。
 - `/jobs/:jobid/jobmanager/config`：作业对应 JobManager 配置。
 - `/jobs/:jobid/exceptions`：root exception 和异常列表。
-- `/jobs/:jobid/checkpoints`：checkpoint 统计和最近 checkpoint。
+- `/jobs/:jobid/checkpoints`：checkpoint 统计、最近 checkpoint、耗时/状态大小/alignment buffered 的 summary。
 - `/jobs/:jobid/vertices/:vertexid/backpressure`：vertex 反压采样结果。
 
 REST API 依据 Apache Flink 1.18 官方文档：
@@ -108,6 +108,11 @@ https://nightlies.apache.org/flink/flink-docs-release-1.18/docs/ops/rest_api/
 ```bash
 flink-cli diagnose --include-snapshot http://jobmanager-host:8081
 ```
+
+Doris Writer 反压场景下，`sink_busy_upstream_backpressure` 的 evidence 会优先给出两个紧凑摘要：
+
+- `doris_sink_metrics.summary`：单批 rows/bytes、Stream Load `loadTimeMs/writeDataTimeMs`、提交耗时等。
+- `checkpoint_summary`：checkpoint completed/failed、最近成功耗时、历史平均/最大耗时、state size、alignment buffered。
 
 多作业或大作业场景：
 

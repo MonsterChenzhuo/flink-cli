@@ -63,6 +63,16 @@ func TestDiagnoseReportsBusySinkWithUpstreamBackpressure(t *testing.T) {
 				Name:  "sync-to-doris",
 				State: "RUNNING",
 			},
+			Checkpoints: CheckpointStats{
+				Counts: CheckpointCounts{Total: 54, Completed: 54, Failed: 0},
+				Summary: CheckpointStatsSummary{
+					EndToEndDuration:  CheckpointMetricStats{Avg: 24549, Max: 35158},
+					AlignmentBuffered: CheckpointMetricStats{Avg: 0, Max: 0},
+				},
+				Latest: LatestCheckpoints{
+					Completed: &Checkpoint{ID: 434039, EndToEndDuration: 23423, StateSize: 88272, AlignmentBuffered: 0},
+				},
+			},
 			Detail: JobDetail{
 				Vertices: []Vertex{
 					{
@@ -110,6 +120,9 @@ func TestDiagnoseReportsBusySinkWithUpstreamBackpressure(t *testing.T) {
 	finding := findFinding(report.Findings, "sink_busy_upstream_backpressure")
 	if _, ok := finding.Evidence["doris_sink_metrics"]; !ok {
 		t.Fatalf("missing Doris sink metrics in evidence: %+v", finding.Evidence)
+	}
+	if _, ok := finding.Evidence["checkpoint_summary"]; !ok {
+		t.Fatalf("missing checkpoint summary in evidence: %+v", finding.Evidence)
 	}
 }
 

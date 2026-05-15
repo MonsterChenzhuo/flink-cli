@@ -17,7 +17,6 @@ type Summary struct {
 	OK          int            `json:"ok"`
 	TotalJobs   int            `json:"total_jobs"`
 	JobsByState map[string]int `json:"jobs_by_state"`
-	Warnings    []string       `json:"warnings,omitempty"`
 }
 
 type Finding struct {
@@ -33,7 +32,6 @@ func Diagnose(snapshot Snapshot) Report {
 		Summary: Summary{
 			TotalJobs:   len(snapshot.Jobs),
 			JobsByState: map[string]int{},
-			Warnings:    snapshot.Warnings,
 		},
 		Snapshot: snapshot,
 	}
@@ -146,11 +144,11 @@ func diagnoseJob(job JobSnapshot) []Finding {
 			})
 		}
 	}
-	findings = append(findings, diagnoseBusySinkBackpressure(jobID, jobName, job.Detail.Vertices)...)
+	findings = append(findings, diagnoseBusySinkBackpressure(jobID, jobName, job.Checkpoints, job.Detail.Vertices)...)
 	return findings
 }
 
-func diagnoseBusySinkBackpressure(jobID, jobName string, vertices []Vertex) []Finding {
+func diagnoseBusySinkBackpressure(jobID, jobName string, checkpoints CheckpointStats, vertices []Vertex) []Finding {
 	if len(vertices) < 2 {
 		return nil
 	}
@@ -200,6 +198,9 @@ func diagnoseBusySinkBackpressure(jobID, jobName string, vertices []Vertex) []Fi
 		if vertex.DorisMetrics != nil {
 			evidence["doris_sink_metrics"] = map[string]any{"summary": vertex.DorisMetrics.Summary}
 		}
+		if checkpointSummary := summarizeCheckpointStats(checkpoints); len(checkpointSummary) > 0 {
+			evidence["checkpoint_summary"] = checkpointSummary
+		}
 		findings = append(findings, Finding{
 			RuleID:     "sink_busy_upstream_backpressure",
 			Severity:   "warn",
@@ -209,6 +210,46 @@ func diagnoseBusySinkBackpressure(jobID, jobName string, vertices []Vertex) []Fi
 		})
 	}
 	return findings
+}
+
+func summarizeCheckpointStats(stats CheckpointStats) map[string]any {
+	if stats.Counts.Total == 0 {
+		return nil
+	}
+	out := map[string]any{
+		"counts": stats.Counts,
+	}
+	if stats.Latest.Completed != nil {
+		out["latest_completed"] = map[string]any{
+			"id":                         stats.Latest.Completed.ID,
+			"end_to_end_duration_ms":     stats.Latest.Completed.EndToEndDuration,
+			"end_to_end_duration_sec":    round3(float64(stats.Latest.Completed.EndToEndDuration) / 1000),
+			"state_size_bytes":           stats.Latest.Completed.StateSize,
+			"alignment_buffered_bytes":   stats.Latest.Completed.AlignmentBuffered,
+			"latest_ack_timestamp_epoch": stats.Latest.Completed.LatestAckTimestamp,
+		}
+	}
+	if stats.Summary.EndToEndDuration.Avg > 0 || stats.Summary.EndToEndDuration.Max > 0 {
+		out["end_to_end_duration"] = map[string]any{
+			"avg_ms":  stats.Summary.EndToEndDuration.Avg,
+			"avg_sec": round3(float64(stats.Summary.EndToEndDuration.Avg) / 1000),
+			"max_ms":  stats.Summary.EndToEndDuration.Max,
+			"max_sec": round3(float64(stats.Summary.EndToEndDuration.Max) / 1000),
+		}
+	}
+	if stats.Summary.AlignmentBuffered.Avg > 0 || stats.Summary.AlignmentBuffered.Max > 0 {
+		out["alignment_buffered"] = map[string]any{
+			"avg_bytes": stats.Summary.AlignmentBuffered.Avg,
+			"max_bytes": stats.Summary.AlignmentBuffered.Max,
+		}
+	}
+	if stats.Summary.StateSize.Avg > 0 || stats.Summary.StateSize.Max > 0 {
+		out["state_size"] = map[string]any{
+			"avg_bytes": stats.Summary.StateSize.Avg,
+			"max_bytes": stats.Summary.StateSize.Max,
+		}
+	}
+	return out
 }
 
 func summarizeBackpressure(bp BackpressureInfo) map[string]any {

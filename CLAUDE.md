@@ -51,7 +51,7 @@ https://nightlies.apache.org/flink/flink-docs-release-1.18/docs/ops/rest_api/
 - `GET /jobs/:jobid`：作业详情、vertex 列表。
 - `GET /jobs/:jobid/jobmanager/config`：作业对应 JobManager 配置。
 - `GET /jobs/:jobid/exceptions`：root exception 和异常列表。
-- `GET /jobs/:jobid/checkpoints`：checkpoint 统计。
+- `GET /jobs/:jobid/checkpoints`：checkpoint 计数、最近 checkpoint 和 summary 分位/均值统计。注意 Flink 可能把 summary 数值返回成 `88272.0` 这类浮点 JSON，类型要兼容整数和浮点。
 - `GET /jobs/:jobid/vertices/:vertexid/backpressure`：vertex 反压信息。
 - `GET /jobs/:jobid/vertices/:vertexid/metrics`：对 Doris Writer vertex 做受限采样，提取 Stream Load flush/load/writeData 指标。
 - `GET /taskmanagers`：列出 TaskManager。
@@ -120,6 +120,7 @@ stderr 输出 JSON error：
 - `backpressure_high`：vertex backpressure level 为 high。
 - `sink_busy_upstream_backpressure`：sink 自身 backpressure 可能是 ok，但 sink busy 较高且上游 vertex 已累计反压。这个规则用于 Doris Writer 这类场景，避免 agent 被 “Writer backpressure=ok” 误导；应继续检查外部系统吞吐、sink flush/load/commit 指标、批次大小、checkpoint 周期和 sink 并发。
   - 如果命中 Doris Writer，`finding.evidence.doris_sink_metrics.summary` 会包含采样 subtask 的 `per_flush_rows_mean`、`per_flush_bytes_mean`、`per_flush_mib_mean`、`load_time_ms_mean/max`、`load_time_sec_mean/max`、`write_data_time_ms_mean/max`、`write_data_time_sec_mean/max`、`load_mib_per_sec_per_subtask`、`begin_txn_time_ms_mean`、`commit_and_publish_time_ms_mean`。
+  - 同一个 finding 会尽量带 `finding.evidence.checkpoint_summary`，包含 checkpoint counts、最近成功耗时、历史 avg/max duration、state size 和 alignment buffered。用它先排除 checkpoint 对齐/状态过大问题，不要再手写脚本单独拉 `/checkpoints`。
 - `no_obvious_issue`：没有命中明显异常时输出 ok finding。
 
 后续扩展规则时，先加测试，再实现。避免只凭字段存在就输出高置信度结论；`severity` 表示诊断置信度，不等于优化 ROI。
@@ -145,6 +146,7 @@ stderr 输出 JSON error：
   - 遇到 `returned non-JSON response`/`got HTML` 时，说明当前 URL 没拿到 Flink REST JSON，优先检查 YARN proxy/application 是否过期或被登录页拦截。
   - 看到 `sink_busy_upstream_backpressure` 时，先说明“sink 写入繁忙导致上游反压”，再给证据；不要只说 REST 没发现 high backpressure。
   - Doris Writer 场景要优先引用 `finding.evidence.doris_sink_metrics.summary`，不要再手写 Python/curl 去拼 metrics，除非需要更深的全量 subtask 分析。
+  - Doris Writer 场景也要引用 `finding.evidence.checkpoint_summary` 判断 checkpoint 是否稳定；如果 `completed` 持续增长、`failed=0`、`alignment_buffered_bytes=0` 且 duration 稳定，则不要把消费不动优先归因到 checkpoint。
   - Doris 写入场景优先提醒检查 Stream Load `writeDataTimeMs/loadTimeMs`、`sink.enable.batch-mode`、`sink.buffer-flush.*`、checkpoint 周期、sink 并发、BE load/compaction/tablet 热点。
   - 需要线程栈时使用 `flink-cli thread-dump <url>`；如果 URL 是 `#/task-manager/<id>/thread-dump` 页面，直接传完整 URL。默认不要加 `--include-threads`，先看摘要。
 - 主要包：

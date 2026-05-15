@@ -132,8 +132,9 @@ type JobException struct {
 }
 
 type CheckpointStats struct {
-	Counts CheckpointCounts  `json:"counts"`
-	Latest LatestCheckpoints `json:"latest,omitempty"`
+	Counts  CheckpointCounts       `json:"counts"`
+	Summary CheckpointStatsSummary `json:"summary,omitempty"`
+	Latest  LatestCheckpoints      `json:"latest,omitempty"`
 }
 
 type CheckpointCounts struct {
@@ -150,6 +151,25 @@ type LatestCheckpoints struct {
 	Restored  *Checkpoint `json:"restored,omitempty"`
 }
 
+type CheckpointStatsSummary struct {
+	StateSize         CheckpointMetricStats `json:"state_size,omitempty"`
+	EndToEndDuration  CheckpointMetricStats `json:"end_to_end_duration,omitempty"`
+	AlignmentBuffered CheckpointMetricStats `json:"alignment_buffered,omitempty"`
+	ProcessedData     CheckpointMetricStats `json:"processed_data,omitempty"`
+	PersistedData     CheckpointMetricStats `json:"persisted_data,omitempty"`
+}
+
+type CheckpointMetricStats struct {
+	Min  float64 `json:"min,omitempty"`
+	Max  float64 `json:"max,omitempty"`
+	Avg  float64 `json:"avg,omitempty"`
+	P50  float64 `json:"p50,omitempty"`
+	P90  float64 `json:"p90,omitempty"`
+	P95  float64 `json:"p95,omitempty"`
+	P99  float64 `json:"p99,omitempty"`
+	P999 float64 `json:"p999,omitempty"`
+}
+
 type Checkpoint struct {
 	ID                 int64  `json:"id,omitempty"`
 	Status             string `json:"status,omitempty"`
@@ -158,6 +178,9 @@ type Checkpoint struct {
 	LatestAckTimestamp int64  `json:"latest_ack_timestamp,omitempty"`
 	EndToEndDuration   int64  `json:"end_to_end_duration,omitempty"`
 	StateSize          int64  `json:"state_size,omitempty"`
+	AlignmentBuffered  int64  `json:"alignment_buffered,omitempty"`
+	ProcessedData      int64  `json:"processed_data,omitempty"`
+	PersistedData      int64  `json:"persisted_data,omitempty"`
 	FailureMessage     string `json:"failure_message,omitempty"`
 }
 

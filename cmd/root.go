@@ -254,7 +254,8 @@ func runThreadDump(ctx context.Context, rawURL string, st state, stdout, stderr 
 		TaskManagerID:   st.taskManagerID,
 		Summary:         &summary,
 		NextActions: []string{
-			"优先查看 summary.states 和 summary.interesting_threads，确认是否有 Doris、HTTP/socket write、checkpoint 或 BLOCKED 线程。",
+			"优先查看 summary.interpretation，确认本次线程快照是否命中 Doris、HTTP/socket write、checkpoint 或 BLOCKED 等特征。",
+			"再查看 summary.reasons 和 summary.interesting_threads 的 top_frames；interesting_count=0 只代表本次快照没命中特征，不代表作业没有问题。",
 			"需要完整线程栈时重新执行：flink-cli thread-dump --include-threads --taskmanager-id <id> <url>。",
 		},
 	}

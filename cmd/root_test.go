@@ -299,6 +299,10 @@ func TestThreadDumpCommandInfersTaskManagerIDFromWebUIFragment(t *testing.T) {
 	if got, want := summary["interesting_count"], float64(1); got != want {
 		t.Fatalf("interesting_count = %v, want %v", got, want)
 	}
+	actions := env["next_actions"].([]any)
+	if !strings.Contains(actions[0].(string), "summary.interpretation") {
+		t.Fatalf("first next action should point to summary.interpretation: %s", stdout.String())
+	}
 }
 
 func TestThreadDumpCommandReturnsHelpfulHTMLHint(t *testing.T) {

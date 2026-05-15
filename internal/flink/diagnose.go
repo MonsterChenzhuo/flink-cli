@@ -160,9 +160,10 @@ func diagnoseBusySinkBackpressure(jobID, jobName string, checkpoints CheckpointS
 		}
 		upstreamBackpressured = true
 		upstreamEvidence = append(upstreamEvidence, map[string]any{
-			"vertex_id":                 vertex.ID,
-			"vertex_name":               vertex.Name,
-			"accumulated_backpressured": vertex.Metrics.AccumulatedBackpressuredMS,
+			"vertex_id":                     vertex.ID,
+			"vertex_name":                   vertex.Name,
+			"accumulated_backpressured":     vertex.Metrics.AccumulatedBackpressuredMS,
+			"accumulated_backpressured_sec": round3(vertex.Metrics.AccumulatedBackpressuredMS / 1000),
 		})
 	}
 	if !upstreamBackpressured {
@@ -189,10 +190,13 @@ func diagnoseBusySinkBackpressure(jobID, jobName string, checkpoints CheckpointS
 			"parallelism":               vertex.Parallelism,
 			"busy_ratio":                round3(busyRatio),
 			"read_bytes":                vertex.Metrics.ReadBytes,
+			"read_gib":                  round3(vertex.Metrics.ReadBytes / 1024 / 1024 / 1024),
 			"read_records":              vertex.Metrics.ReadRecords,
 			"write_records":             vertex.Metrics.WriteRecords,
 			"accumulated_busy_ms":       vertex.Metrics.AccumulatedBusyMS,
+			"accumulated_busy_sec":      round3(vertex.Metrics.AccumulatedBusyMS / 1000),
 			"accumulated_idle_ms":       vertex.Metrics.AccumulatedIdleMS,
+			"accumulated_idle_sec":      round3(vertex.Metrics.AccumulatedIdleMS / 1000),
 			"upstream_backpressured_ms": upstreamEvidence,
 		}
 		if vertex.DorisMetrics != nil {
@@ -200,6 +204,9 @@ func diagnoseBusySinkBackpressure(jobID, jobName string, checkpoints CheckpointS
 		}
 		if checkpointSummary := summarizeCheckpointStats(checkpoints); len(checkpointSummary) > 0 {
 			evidence["checkpoint_summary"] = checkpointSummary
+		}
+		if interpretation := interpretSinkPressure(vertex, checkpoints); len(interpretation) > 0 {
+			evidence["interpretation"] = interpretation
 		}
 		findings = append(findings, Finding{
 			RuleID:     "sink_busy_upstream_backpressure",
@@ -210,6 +217,56 @@ func diagnoseBusySinkBackpressure(jobID, jobName string, checkpoints CheckpointS
 		})
 	}
 	return findings
+}
+
+func interpretSinkPressure(vertex Vertex, checkpoints CheckpointStats) map[string]any {
+	out := map[string]any{}
+	if vertex.DorisMetrics != nil {
+		summary := vertex.DorisMetrics.Summary
+		if summary.LoadTimeMsMean > 0 && summary.WriteDataTimeMsMean > 0 {
+			writeDataShare := summary.WriteDataShareOfLoad
+			if writeDataShare == 0 {
+				writeDataShare = round3(summary.WriteDataTimeMsMean / summary.LoadTimeMsMean)
+			}
+			out["write_data_share_of_load"] = writeDataShare
+			if writeDataShare >= 0.80 && summary.LoadTimeMsMean >= 30000 {
+				out["primary_bottleneck"] = "doris_stream_load_write_data"
+				out["doris_commit_publish_likely_bottleneck"] = false
+			}
+		}
+		if summary.CommitAndPublishTimeMsMean > 0 {
+			out["commit_publish_sec_mean"] = summary.CommitAndPublishTimeSecMean
+		}
+		if summary.PerFlushMiBMean > 0 {
+			out["per_flush_mib_mean"] = summary.PerFlushMiBMean
+		}
+	}
+	if checkpoints.Counts.Total > 0 {
+		checkpointLikelyBottleneck := checkpoints.Counts.Failed > 0 || checkpoints.Counts.InProgress > 0
+		latestDuration := int64(0)
+		alignmentBuffered := int64(0)
+		if checkpoints.Latest.Completed != nil {
+			latestDuration = checkpoints.Latest.Completed.EndToEndDuration
+			alignmentBuffered = checkpoints.Latest.Completed.AlignmentBuffered
+			if latestDuration >= 60000 || alignmentBuffered > 0 {
+				checkpointLikelyBottleneck = true
+			}
+		}
+		out["checkpoint_likely_bottleneck"] = checkpointLikelyBottleneck
+		out["checkpoint_completed"] = checkpoints.Counts.Completed
+		out["checkpoint_failed"] = checkpoints.Counts.Failed
+		if latestDuration > 0 {
+			out["checkpoint_latest_duration_sec"] = round3(float64(latestDuration) / 1000)
+		}
+		out["checkpoint_alignment_buffered_bytes"] = alignmentBuffered
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	if out["primary_bottleneck"] == "doris_stream_load_write_data" {
+		out["next_focus"] = "检查 Doris BE 写入吞吐、tablet/partition 热点、compaction/load queue；或降低单次 Stream Load 批次大小。"
+	}
+	return out
 }
 
 func summarizeCheckpointStats(stats CheckpointStats) map[string]any {

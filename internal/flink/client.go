@@ -437,19 +437,25 @@ func summarizeDorisSinkMetrics(samples []DorisSinkMetricsSample) DorisSinkMetric
 			commitMeans = append(commitMeans, sample.CommitAndPublishTimeMsMean)
 		}
 	}
-	summary.PerFlushRowsMean = mean(perFlushRows)
-	summary.PerFlushBytesMean = mean(perFlushBytes)
-	summary.LoadTimeMsMean = mean(loadMeans)
-	summary.WriteDataTimeMsMean = mean(writeMeans)
-	summary.BeginTxnTimeMsMean = mean(beginMeans)
-	summary.CommitAndPublishTimeMsMean = mean(commitMeans)
+	summary.PerFlushRowsMean = round3(mean(perFlushRows))
+	summary.PerFlushBytesMean = round3(mean(perFlushBytes))
+	summary.LoadTimeMsMean = round3(mean(loadMeans))
+	summary.WriteDataTimeMsMean = round3(mean(writeMeans))
+	summary.BeginTxnTimeMsMean = round3(mean(beginMeans))
+	summary.CommitAndPublishTimeMsMean = round3(mean(commitMeans))
 	summary.PerFlushMiBMean = round3(summary.PerFlushBytesMean / 1024 / 1024)
+	summary.PerFlushGiBMean = round3(summary.PerFlushBytesMean / 1024 / 1024 / 1024)
 	summary.LoadTimeSecMean = round3(summary.LoadTimeMsMean / 1000)
 	summary.LoadTimeSecMax = round3(summary.LoadTimeMsMax / 1000)
 	summary.WriteDataTimeSecMean = round3(summary.WriteDataTimeMsMean / 1000)
 	summary.WriteDataTimeSecMax = round3(summary.WriteDataTimeMsMax / 1000)
+	summary.CommitAndPublishTimeSecMean = round3(summary.CommitAndPublishTimeMsMean / 1000)
+	if summary.LoadTimeMsMean > 0 {
+		summary.WriteDataShareOfLoad = round3(summary.WriteDataTimeMsMean / summary.LoadTimeMsMean)
+	}
 	if summary.LoadTimeSecMean > 0 {
 		summary.LoadMiBPerSecPerSubtask = round3(summary.PerFlushMiBMean / summary.LoadTimeSecMean)
+		summary.LoadGiBPerSecPerSubtask = round3(summary.PerFlushGiBMean / summary.LoadTimeSecMean)
 	}
 	return summary
 }

@@ -249,6 +249,35 @@ func TestClientGetsThreadDump(t *testing.T) {
 	}
 }
 
+func TestSummarizeDorisSinkMetricsRoundsAndDerivesReadableFields(t *testing.T) {
+	summary := summarizeDorisSinkMetrics([]DorisSinkMetricsSample{
+		{
+			Subtask:                    0,
+			FlushSucceeded:             3,
+			FlushLoadedRows:            82000,
+			FlushLoadBytes:             2652796129,
+			LoadTimeMsMean:             118565.51530612246,
+			LoadTimeMsMax:              148271,
+			WriteDataTimeMsMean:        118466.97448979593,
+			WriteDataTimeMsMax:         148122,
+			BeginTxnTimeMsMean:         20.591478696741856,
+			CommitAndPublishTimeMsMean: 46.320802005012524,
+		},
+	})
+	if got, want := summary.PerFlushMiBMean, 843.301; got != want {
+		t.Fatalf("per flush MiB mean = %v, want %v", got, want)
+	}
+	if got, want := summary.WriteDataShareOfLoad, 0.999; got != want {
+		t.Fatalf("write data share = %v, want %v", got, want)
+	}
+	if got, want := summary.LoadMiBPerSecPerSubtask, 7.113; got != want {
+		t.Fatalf("load MiB/s = %v, want %v", got, want)
+	}
+	if got, want := summary.CommitAndPublishTimeSecMean, 0.046; got != want {
+		t.Fatalf("commit seconds = %v, want %v", got, want)
+	}
+}
+
 func TestClientListTaskManagers(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/taskmanagers", func(w http.ResponseWriter, r *http.Request) {

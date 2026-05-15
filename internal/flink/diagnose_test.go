@@ -100,10 +100,13 @@ func TestDiagnoseReportsBusySinkWithUpstreamBackpressure(t *testing.T) {
 						},
 						DorisMetrics: &DorisSinkMetrics{
 							Summary: DorisSinkMetricsSummary{
-								PerFlushBytesMean:          536870912,
-								LoadTimeMsMean:             90000,
-								WriteDataTimeMsMean:        89000,
-								CommitAndPublishTimeMsMean: 40,
+								PerFlushBytesMean:           536870912,
+								PerFlushMiBMean:             512,
+								LoadTimeMsMean:              90000,
+								WriteDataTimeMsMean:         89000,
+								WriteDataShareOfLoad:        0.989,
+								CommitAndPublishTimeMsMean:  40,
+								CommitAndPublishTimeSecMean: 0.04,
 							},
 						},
 						Backpressure: &BackpressureInfo{BackpressureLevel2: "ok"},
@@ -123,6 +126,16 @@ func TestDiagnoseReportsBusySinkWithUpstreamBackpressure(t *testing.T) {
 	}
 	if _, ok := finding.Evidence["checkpoint_summary"]; !ok {
 		t.Fatalf("missing checkpoint summary in evidence: %+v", finding.Evidence)
+	}
+	interpretation, ok := finding.Evidence["interpretation"].(map[string]any)
+	if !ok {
+		t.Fatalf("missing interpretation in evidence: %+v", finding.Evidence)
+	}
+	if got, want := interpretation["primary_bottleneck"], "doris_stream_load_write_data"; got != want {
+		t.Fatalf("primary_bottleneck = %v, want %v", got, want)
+	}
+	if got, want := interpretation["checkpoint_likely_bottleneck"], false; got != want {
+		t.Fatalf("checkpoint_likely_bottleneck = %v, want %v", got, want)
 	}
 }
 

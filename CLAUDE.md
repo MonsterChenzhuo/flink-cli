@@ -119,8 +119,9 @@ stderr 输出 JSON error：
 - `vertex_failed`：vertex 处于 failed/canceled/canceling。
 - `backpressure_high`：vertex backpressure level 为 high。
 - `sink_busy_upstream_backpressure`：sink 自身 backpressure 可能是 ok，但 sink busy 较高且上游 vertex 已累计反压。这个规则用于 Doris Writer 这类场景，避免 agent 被 “Writer backpressure=ok” 误导；应继续检查外部系统吞吐、sink flush/load/commit 指标、批次大小、checkpoint 周期和 sink 并发。
-  - 如果命中 Doris Writer，`finding.evidence.doris_sink_metrics.summary` 会包含采样 subtask 的 `per_flush_rows_mean`、`per_flush_bytes_mean`、`per_flush_mib_mean`、`load_time_ms_mean/max`、`load_time_sec_mean/max`、`write_data_time_ms_mean/max`、`write_data_time_sec_mean/max`、`load_mib_per_sec_per_subtask`、`begin_txn_time_ms_mean`、`commit_and_publish_time_ms_mean`。
+  - 如果命中 Doris Writer，`finding.evidence.doris_sink_metrics.summary` 会包含采样 subtask 的 `per_flush_rows_mean`、`per_flush_bytes_mean`、`per_flush_mib_mean`、`per_flush_gib_mean`、`load_time_ms_mean/max`、`load_time_sec_mean/max`、`write_data_time_ms_mean/max`、`write_data_time_sec_mean/max`、`write_data_share_of_load`、`load_mib_per_sec_per_subtask`、`begin_txn_time_ms_mean`、`commit_and_publish_time_ms_mean`、`commit_and_publish_time_sec_mean`。这些均值类字段按 3 位小数输出，避免大作业诊断时出现难读的长小数。
   - 同一个 finding 会尽量带 `finding.evidence.checkpoint_summary`，包含 checkpoint counts、最近成功耗时、历史 avg/max duration、state size 和 alignment buffered。用它先排除 checkpoint 对齐/状态过大问题，不要再手写脚本单独拉 `/checkpoints`。
+  - 同一个 finding 会尽量带 `finding.evidence.interpretation`，直接给出 `primary_bottleneck`、`checkpoint_likely_bottleneck`、`doris_commit_publish_likely_bottleneck`、`next_focus` 等面向 agent 的判断提示。Agent 应先复述这些字段，再结合原始指标解释原因。
 - `no_obvious_issue`：没有命中明显异常时输出 ok finding。
 
 后续扩展规则时，先加测试，再实现。避免只凭字段存在就输出高置信度结论；`severity` 表示诊断置信度，不等于优化 ROI。
@@ -147,6 +148,7 @@ stderr 输出 JSON error：
   - 看到 `sink_busy_upstream_backpressure` 时，先说明“sink 写入繁忙导致上游反压”，再给证据；不要只说 REST 没发现 high backpressure。
   - Doris Writer 场景要优先引用 `finding.evidence.doris_sink_metrics.summary`，不要再手写 Python/curl 去拼 metrics，除非需要更深的全量 subtask 分析。
   - Doris Writer 场景也要引用 `finding.evidence.checkpoint_summary` 判断 checkpoint 是否稳定；如果 `completed` 持续增长、`failed=0`、`alignment_buffered_bytes=0` 且 duration 稳定，则不要把消费不动优先归因到 checkpoint。
+  - Doris Writer 场景还要看 `finding.evidence.interpretation`：如果 `primary_bottleneck=doris_stream_load_write_data` 且 `write_data_share_of_load` 接近 1，说明主要耗在 Stream Load 写数据/等待 Doris 消化，不要把几十毫秒的 commit/publish 当主因。
   - Doris 写入场景优先提醒检查 Stream Load `writeDataTimeMs/loadTimeMs`、`sink.enable.batch-mode`、`sink.buffer-flush.*`、checkpoint 周期、sink 并发、BE load/compaction/tablet 热点。
   - 需要线程栈时使用 `flink-cli thread-dump <url>`；如果 URL 是 `#/task-manager/<id>/thread-dump` 页面，直接传完整 URL。默认不要加 `--include-threads`，先看摘要。
 - 主要包：

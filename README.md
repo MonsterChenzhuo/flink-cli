@@ -24,14 +24,18 @@ curl -fsSL https://raw.githubusercontent.com/MonsterChenzhuo/flink-cli/main/scri
 # 锁定版本
 curl -fsSL https://raw.githubusercontent.com/MonsterChenzhuo/flink-cli/main/scripts/install.sh | VERSION=v0.1.0 bash
 
-# 安装到无需 sudo 的路径，并跳过 Claude Code skill 和 /flink slash command
-curl -fsSL https://raw.githubusercontent.com/MonsterChenzhuo/flink-cli/main/scripts/install.sh | PREFIX="$HOME/.local/bin" NO_SUDO=1 NO_SKILL=1 NO_COMMAND=1 bash
+# 安装到无需 sudo 的路径，并跳过 Claude/Codex skill 和 /flink slash command
+curl -fsSL https://raw.githubusercontent.com/MonsterChenzhuo/flink-cli/main/scripts/install.sh | PREFIX="$HOME/.local/bin" NO_SUDO=1 NO_SKILL=1 NO_CODEX_SKILL=1 NO_COMMAND=1 bash
 ```
 
 安装脚本默认还会安装：
 
 - Claude Code skill：`~/.claude/skills/flink/SKILL.md`
 - Claude Code slash command：`~/.claude/commands/flink.md`，对应 `/flink`
+- Codex skill：`~/.agents/skills/flink/SKILL.md`
+- Codex-local skill copy：`~/.codex/skills/flink/SKILL.md`
+
+注意：`/flink` 是 Claude Code slash command。Codex 当前通过 skill / AGENTS 发现能力，不读取 `~/.claude/commands`；安装后需要新开 Codex 会话才能看到新 skill。
 
 YARN application 模式下，如果 Web UI 经过 gateway/proxy 暴露，也可以直接传带 path 的地址：
 

@@ -118,7 +118,7 @@ stderr 输出 JSON error：
 - 安装：`scripts/install.sh` 从 latest release 下载当前 OS/arch 的 tar.gz，校验 checksum 后安装 `flink-cli`。
 - Skill：`.claude/skills/flink/SKILL.md` 会随 release 包分发，安装脚本默认同步到 `~/.claude/skills/flink`。如果用户只要二进制，可设置 `NO_SKILL=1`。
 - Slash command：`.claude/commands/flink.md` 会随 release 包分发，安装脚本默认同步到 `~/.claude/commands/flink.md`，对应 Claude Code 里的 `/flink`。如果不需要，可设置 `NO_COMMAND=1`。
-- Codex：`AGENTS.md` 记录 Codex 侧的中文使用和开发约束，保持与本文件同步。
+- Codex：`AGENTS.md` 记录 Codex 侧的中文使用和开发约束；安装脚本默认同步 skill 到 `~/.agents/skills/flink` 和 `~/.codex/skills/flink`。Codex 不读取 Claude Code 的 `/flink` slash command，通常需要新开会话才会加载新 skill。
 - 主要包：
   - `cmd`：命令入口、退出码、JSON envelope。
   - `internal/flink`：URL 规范化、REST client、数据模型和诊断规则。

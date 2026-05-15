@@ -6,9 +6,12 @@
 #   VERSION=v0.1.2                 pin a specific release (default: latest)
 #   PREFIX=/usr/local/bin          install directory for the binary
 #   SKILL_DIR=~/.claude/skills/flink install directory for the bundled Claude Code skill
+#   AGENTS_SKILL_DIR=~/.agents/skills/flink install directory for the bundled Codex skill
+#   CODEX_SKILL_DIR=~/.codex/skills/flink install directory for an extra Codex-local skill copy
 #   COMMAND_DIR=~/.claude/commands   install directory for the bundled /flink slash command
 #   NO_SUDO=1                      never use sudo; fail if PREFIX is not writable
 #   NO_SKILL=1                     skip installing the bundled skill
+#   NO_CODEX_SKILL=1               skip installing Codex skill copies
 #   NO_COMMAND=1                   skip installing the bundled /flink slash command
 #   REPO=MonsterChenzhuo/flink-cli override repo slug
 
@@ -17,6 +20,8 @@ set -euo pipefail
 REPO="${REPO:-MonsterChenzhuo/flink-cli}"
 PREFIX="${PREFIX:-/usr/local/bin}"
 SKILL_DIR="${SKILL_DIR:-$HOME/.claude/skills/flink}"
+AGENTS_SKILL_DIR="${AGENTS_SKILL_DIR:-$HOME/.agents/skills/flink}"
+CODEX_SKILL_DIR="${CODEX_SKILL_DIR:-$HOME/.codex/skills/flink}"
 COMMAND_DIR="${COMMAND_DIR:-$HOME/.claude/commands}"
 VERSION="${VERSION:-}"
 
@@ -99,6 +104,16 @@ if [ "${NO_SKILL:-0}" != "1" ] && [ -d "$skill_src" ]; then
   info "installing Claude Code skill to ${SKILL_DIR}"
   mkdir -p "$SKILL_DIR"
   (cd "$skill_src" && tar -cf - .) | (cd "$SKILL_DIR" && tar -xf -)
+fi
+
+if [ "${NO_CODEX_SKILL:-0}" != "1" ] && [ -d "$skill_src" ]; then
+  info "installing Codex skill to ${AGENTS_SKILL_DIR}"
+  mkdir -p "$AGENTS_SKILL_DIR"
+  (cd "$skill_src" && tar -cf - .) | (cd "$AGENTS_SKILL_DIR" && tar -xf -)
+
+  info "installing Codex-local skill copy to ${CODEX_SKILL_DIR}"
+  mkdir -p "$CODEX_SKILL_DIR"
+  (cd "$skill_src" && tar -cf - .) | (cd "$CODEX_SKILL_DIR" && tar -xf -)
 fi
 
 command_src="${tmpdir}/.claude/commands/flink.md"

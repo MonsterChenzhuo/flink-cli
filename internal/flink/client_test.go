@@ -148,6 +148,32 @@ func TestClientReturnsJobNotFoundForRequestedJobID(t *testing.T) {
 	}
 }
 
+func TestClientReturnsHelpfulErrorForHTMLResponse(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/jobs/overview", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		_, _ = w.Write([]byte(`<html><body>application expired</body></html>`))
+	})
+	server := httptest.NewServer(mux)
+	defer server.Close()
+
+	client, err := NewClient(server.URL)
+	if err != nil {
+		t.Fatalf("NewClient returned error: %v", err)
+	}
+	_, err = client.Collect(context.Background())
+	if err == nil {
+		t.Fatalf("expected error for HTML response")
+	}
+	var nonJSON *NonJSONResponseError
+	if !errors.As(err, &nonJSON) {
+		t.Fatalf("error = %T %[1]v, want *NonJSONResponseError", err)
+	}
+	if nonJSON.Prefix == "" {
+		t.Fatalf("expected response prefix in error")
+	}
+}
+
 func TestClientListJobsOnlyFetchesOverview(t *testing.T) {
 	detailCalled := false
 	mux := http.NewServeMux()

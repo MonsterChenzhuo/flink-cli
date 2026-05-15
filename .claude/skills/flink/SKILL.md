@@ -16,6 +16,11 @@ Use `flink-cli` to query the Flink Web UI REST API and emit compact JSON for ana
    ```
 
    The command exits `0` even when findings are critical. Read `summary.critical`, `summary.warn`, and `findings[]`.
+   If stderr contains `x509`, `certificate`, or an internal gateway certificate error, retry once with:
+
+   ```bash
+   flink-cli diagnose --insecure-skip-verify <flink-web-ui-url>
+   ```
 
 2. Use the top-level fields first:
 
@@ -33,6 +38,7 @@ Use `flink-cli` to query the Flink Web UI REST API and emit compact JSON for ana
    - `root_exception`, `job_failed`, `vertex_failed`: read `evidence.root_exception`, failed vertex evidence, then fetch JobManager/TaskManager logs or YARN diagnostics.
    - `checkpoint_failure_rate`, `checkpoint_slow`: check checkpoint storage, state backend, sink commit latency, alignment duration, and backpressure.
    - `backpressure_high`: follow the affected vertex downstream; inspect sink/external system latency, network buffers, and checkpoint alignment.
+   - `sink_busy_upstream_backpressure`: the sink may report `backpressure=ok` while upstream vertices are backpressured. Treat this as a sink/external-system throughput bottleneck. For Doris, inspect Stream Load `writeDataTimeMs`, `loadTimeMs`, batch size, checkpoint interval, and sink parallelism.
    - `task_state_abnormal`: map failed tasks to their vertex and TaskManager logs.
    - `no_obvious_issue`: REST data does not show obvious job-level failure; continue with business throughput/latency, TaskManager logs, and external system metrics.
 
@@ -49,6 +55,7 @@ Use `flink-cli` to query the Flink Web UI REST API and emit compact JSON for ana
    ```bash
    flink-cli diagnose --job-id <jobId> <flink-web-ui-url>
    flink-cli diagnose --max-vertices 50 <flink-web-ui-url>
+   flink-cli diagnose --insecure-skip-verify --job-id <jobId> <flink-web-ui-url>
    ```
 
    `--max-vertices 0` disables the per-job backpressure collection limit.
@@ -71,6 +78,9 @@ Exit codes:
 - `1`: internal/output error.
 - `2`: user input error.
 - `3`: Flink REST API unreachable or `/jobs/overview` failed.
+
+For internal HTTPS YARN gateways with self-signed or non-standard certificates, use `--insecure-skip-verify`.
+If the error says `returned non-JSON response` or `got HTML`, the URL did not return Flink REST JSON. Check whether the YARN application/proxy URL expired, points to a login/error page, or lost the gateway proxy path.
 
 ## Do Not
 

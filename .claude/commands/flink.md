@@ -25,9 +25,12 @@ argument-hint: "<flink-web-ui-url> [jobId]"
    flink-cli diagnose --job-id "$2" "$1"
    ```
 
-4. 优先阅读输出里的 `diagnosis`、`primary_finding`、`summary`、`findings`、`next_actions`、`warnings`。
-5. 默认不要加 `--include-snapshot`，除非需要完整 REST 原始数据。
-6. 如果需要先列出可用 job，运行：
+4. 如果 stderr 里出现 `x509`、`certificate` 或内网网关证书错误，用相同参数加 `--insecure-skip-verify` 重试一次。
+5. 如果 stderr 里出现 `returned non-JSON response` 或 `got HTML`，说明当前 URL 没有返回 Flink REST JSON，优先检查 YARN application/proxy 是否过期、是否跳到登录页/错误页、或 proxy path 是否丢失。
+6. 优先阅读输出里的 `diagnosis`、`primary_finding`、`summary`、`findings`、`next_actions`、`warnings`。
+7. 如果出现 `sink_busy_upstream_backpressure`，不要因为 sink 自身 backpressure=ok 就判断无问题；它通常表示 sink/外部系统写入吞吐导致上游反压。Doris 场景优先检查 Stream Load 的 `writeDataTimeMs`、`loadTimeMs`、批次大小、checkpoint 周期和 sink 并发。
+8. 默认不要加 `--include-snapshot`，除非需要完整 REST 原始数据。
+9. 如果需要先列出可用 job，运行：
 
    ```bash
    flink-cli diagnose --list-jobs "$1"

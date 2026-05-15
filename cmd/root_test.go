@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
@@ -108,6 +109,49 @@ func TestDiagnoseCommandAcceptsHostPortURL(t *testing.T) {
 	}
 	if got, want := env["ui_url"], "http://"+server.Listener.Addr().String(); got != want {
 		t.Fatalf("ui_url = %v, want %v", got, want)
+	}
+}
+
+func TestDiagnoseCommandSupportsInsecureSkipVerify(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/jobs/overview", func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"jobs":[]}`))
+	})
+	mux.HandleFunc("/jobmanager/config", func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`[]`))
+	})
+	server := httptest.NewTLSServer(mux)
+	defer server.Close()
+
+	var stdout, stderr bytes.Buffer
+	rc := RunWith(context.Background(), []string{"diagnose", "--insecure-skip-verify", server.URL}, &stdout, &stderr)
+	if rc != 0 {
+		t.Fatalf("RunWith rc = %d, stderr = %s", rc, stderr.String())
+	}
+	var env map[string]any
+	if err := json.Unmarshal(stdout.Bytes(), &env); err != nil {
+		t.Fatalf("stdout is not JSON: %v\n%s", err, stdout.String())
+	}
+	if got, want := env["ui_url"], server.URL; got != want {
+		t.Fatalf("ui_url = %v, want %v", got, want)
+	}
+}
+
+func TestDiagnoseCommandSuggestsInsecureSkipVerifyForCertificateErrors(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/jobs/overview", func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"jobs":[]}`))
+	})
+	server := httptest.NewTLSServer(mux)
+	defer server.Close()
+
+	var stdout, stderr bytes.Buffer
+	rc := RunWith(context.Background(), []string{"diagnose", server.URL}, &stdout, &stderr)
+	if rc != 3 {
+		t.Fatalf("RunWith rc = %d, want 3; stderr = %s", rc, stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "--insecure-skip-verify") {
+		t.Fatalf("stderr should suggest --insecure-skip-verify: %s", stderr.String())
 	}
 }
 

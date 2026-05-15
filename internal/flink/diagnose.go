@@ -141,7 +141,71 @@ func diagnoseJob(job JobSnapshot) []Finding {
 			})
 		}
 	}
+	findings = append(findings, diagnoseBusySinkBackpressure(jobID, jobName, job.Detail.Vertices)...)
 	return findings
+}
+
+func diagnoseBusySinkBackpressure(jobID, jobName string, vertices []Vertex) []Finding {
+	if len(vertices) < 2 {
+		return nil
+	}
+	var upstreamBackpressured bool
+	var upstreamEvidence []map[string]any
+	for _, vertex := range vertices {
+		if vertex.Metrics.AccumulatedBackpressuredMS <= 0 {
+			continue
+		}
+		upstreamBackpressured = true
+		upstreamEvidence = append(upstreamEvidence, map[string]any{
+			"vertex_id":                 vertex.ID,
+			"vertex_name":               vertex.Name,
+			"accumulated_backpressured": vertex.Metrics.AccumulatedBackpressuredMS,
+		})
+	}
+	if !upstreamBackpressured {
+		return nil
+	}
+	var findings []Finding
+	for _, vertex := range vertices {
+		if !looksLikeSink(vertex.Name) {
+			continue
+		}
+		total := vertex.Metrics.AccumulatedBusyMS + vertex.Metrics.AccumulatedIdleMS + vertex.Metrics.AccumulatedBackpressuredMS
+		if total <= 0 {
+			continue
+		}
+		busyRatio := vertex.Metrics.AccumulatedBusyMS / total
+		if busyRatio < 0.30 || vertex.Metrics.AccumulatedBackpressuredMS > 0 {
+			continue
+		}
+		evidence := map[string]any{
+			"job_id":                    jobID,
+			"job_name":                  jobName,
+			"vertex_id":                 vertex.ID,
+			"vertex_name":               vertex.Name,
+			"parallelism":               vertex.Parallelism,
+			"busy_ratio":                round3(busyRatio),
+			"read_bytes":                vertex.Metrics.ReadBytes,
+			"read_records":              vertex.Metrics.ReadRecords,
+			"write_records":             vertex.Metrics.WriteRecords,
+			"accumulated_busy_ms":       vertex.Metrics.AccumulatedBusyMS,
+			"accumulated_idle_ms":       vertex.Metrics.AccumulatedIdleMS,
+			"upstream_backpressured_ms": upstreamEvidence,
+		}
+		findings = append(findings, Finding{
+			RuleID:     "sink_busy_upstream_backpressure",
+			Severity:   "warn",
+			Title:      "Sink 写入繁忙并导致上游反压",
+			Evidence:   evidence,
+			Suggestion: "Sink 自身未必显示 high backpressure；优先检查外部写入系统吞吐、sink flush/load/commit 指标、批次大小和 sink 并发。Doris 场景重点看 Stream Load 的 writeDataTimeMs/loadTimeMs。",
+		})
+	}
+	return findings
+}
+
+func looksLikeSink(name string) bool {
+	n := strings.ToLower(name)
+	return strings.Contains(n, "sink") || strings.Contains(n, "doris") || strings.Contains(n, "writer") || strings.Contains(n, "committer")
 }
 
 func diagnoseCheckpoints(jobID, jobName string, stats CheckpointStats) []Finding {

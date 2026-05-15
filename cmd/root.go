@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"context"
+	"crypto/tls"
 	"errors"
 	"io"
 	"net/http"
@@ -47,6 +48,7 @@ type state struct {
 	maxVertices     int
 	listJobs        bool
 	quietWarnings   bool
+	insecureTLS     bool
 }
 
 type listJobsEnvelope struct {
@@ -88,6 +90,7 @@ func newDiagnoseCmd(st *state) *cobra.Command {
 	c.Flags().BoolVar(&st.includeSnapshot, "include-snapshot", false, "include full collected REST snapshot in stdout")
 	c.Flags().BoolVar(&st.listJobs, "list-jobs", false, "only list jobs from /jobs/overview without fetching job details")
 	c.Flags().BoolVar(&st.quietWarnings, "quiet-warnings", false, "omit warning details and keep only warning count/hint")
+	c.Flags().BoolVar(&st.insecureTLS, "insecure-skip-verify", false, "skip HTTPS server certificate verification for internal YARN/Flink gateways")
 	c.Flags().StringVar(&st.jobID, "job-id", "", "diagnose only the matching Flink job id from /jobs/overview")
 	c.Flags().IntVar(&st.maxVertices, "max-vertices", 20, "maximum vertices per job to query for backpressure; 0 means no limit")
 	return c
@@ -117,7 +120,7 @@ func RunWith(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 }
 
 func runDiagnose(ctx context.Context, rawURL string, st state, stdout, stderr io.Writer) int {
-	client, err := flink.NewClientWithHTTP(rawURL, &http.Client{Timeout: st.timeout})
+	client, err := flink.NewClientWithHTTP(rawURL, newHTTPClient(st.timeout, st.insecureTLS))
 	if err != nil {
 		apperr.WriteJSON(stderr, apperr.New("URL_INVALID", err.Error(), "传入完整的 Flink Web UI URL，例如 http://jobmanager:8081 或带 gateway path 的代理地址"))
 		return 2
@@ -133,7 +136,7 @@ func runDiagnose(ctx context.Context, rawURL string, st state, stdout, stderr io
 			apperr.WriteJSON(stderr, apperr.New("JOB_NOT_FOUND", err.Error(), "先运行 `flink-cli diagnose <url>` 查看 summary.jobs_by_state，或确认 --job-id 是否来自 /jobs/overview"))
 			return 2
 		}
-		apperr.WriteJSON(stderr, apperr.New("FLINK_API_UNREACHABLE", err.Error(), "确认 URL 可访问，并且指向 Flink 1.18 Web UI 根路径而不是具体页面路由"))
+		apperr.WriteJSON(stderr, apperr.New("FLINK_API_UNREACHABLE", err.Error(), "确认 URL 可访问，并且指向 Flink 1.18 Web UI 根路径；如果错误包含 x509 或 certificate，可重试加 --insecure-skip-verify；如果返回 HTML，检查 YARN application/proxy 是否过期或被登录页拦截"))
 		return 3
 	}
 	report := flink.Diagnose(snapshot)
@@ -197,6 +200,16 @@ func runListJobs(ctx context.Context, client *flink.Client, rawURL string, start
 		return 1
 	}
 	return 0
+}
+
+func newHTTPClient(timeout time.Duration, insecureTLS bool) *http.Client {
+	if !insecureTLS {
+		return &http.Client{Timeout: timeout}
+	}
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	// 内网 YARN/Flink 网关经常使用自签名或非标准证书；该开关只在用户显式传入时启用。
+	transport.TLSClientConfig = &tls.Config{InsecureSkipVerify: true} //nolint:gosec
+	return &http.Client{Timeout: timeout, Transport: transport}
 }
 
 func primaryFinding(report flink.Report) *flink.Finding {

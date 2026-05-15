@@ -12,6 +12,7 @@
 flink-cli diagnose <flink-web-ui-url>
 flink-cli diagnose --include-snapshot <flink-web-ui-url>
 flink-cli diagnose --job-id <jobId> <flink-web-ui-url>
+flink-cli diagnose --insecure-skip-verify <flink-web-ui-url>
 ```
 
 示例：
@@ -28,6 +29,8 @@ URL 规范化规则：
 - 去掉 query、fragment 和末尾 `/`。
 - 保留 gateway/proxy path，再拼接 REST path。
 - 例如 `http://gateway/proxy/application_1/` 会请求 `http://gateway/proxy/application_1/jobs/overview`。
+- 内网 HTTPS YARN/Flink 网关如果使用自签名或非标准证书，使用 `--insecure-skip-verify`。这是显式开关，不默认跳过证书校验。
+- 真实回归 URL 形态示例：`https://110.238.78.142:9022/component/Yarn/ResourceManager/36/proxy/application_1777980975440_135435/`，需要保留 `/component/Yarn/ResourceManager/.../proxy/application_...` 这段 path。
 
 ## REST API 依据
 
@@ -92,6 +95,7 @@ stderr 输出 JSON error：
 - `1`：内部错误或输出错误。
 - `2`：用户输入错误，例如 URL 不合法。
 - `3`：Flink REST API 不可达或 `/jobs/overview` 拉取失败。
+- 如果错误提示 `returned non-JSON response` 或 `got HTML`，通常是 YARN application/proxy 已过期、URL 指错到登录页/错误页，或 gateway 没有把 REST path 代理到 Flink Web UI。不要继续按 Flink 指标诊断，要先让用户换当前 application 的 Web UI URL。
 
 ## 诊断规则
 
@@ -106,6 +110,7 @@ stderr 输出 JSON error：
 - `checkpoint_slow`：最近成功 checkpoint end-to-end duration 超过 60 秒。
 - `vertex_failed`：vertex 处于 failed/canceled/canceling。
 - `backpressure_high`：vertex backpressure level 为 high。
+- `sink_busy_upstream_backpressure`：sink 自身 backpressure 可能是 ok，但 sink busy 较高且上游 vertex 已累计反压。这个规则用于 Doris Writer 这类场景，避免 agent 被 “Writer backpressure=ok” 误导；应继续检查外部系统吞吐、sink flush/load/commit 指标、批次大小、checkpoint 周期和 sink 并发。
 - `no_obvious_issue`：没有命中明显异常时输出 ok finding。
 
 后续扩展规则时，先加测试，再实现。避免只凭字段存在就输出高置信度结论；`severity` 表示诊断置信度，不等于优化 ROI。
@@ -119,6 +124,12 @@ stderr 输出 JSON error：
 - Skill：`.claude/skills/flink/SKILL.md` 会随 release 包分发，安装脚本默认同步到 `~/.claude/skills/flink`。如果用户只要二进制，可设置 `NO_SKILL=1`。
 - Slash command：`.claude/commands/flink.md` 会随 release 包分发，安装脚本默认同步到 `~/.claude/commands/flink.md`，对应 Claude Code 里的 `/flink`。如果不需要，可设置 `NO_COMMAND=1`。
 - Codex：`AGENTS.md` 记录 Codex 侧的中文使用和开发约束；安装脚本默认同步 skill 到 `~/.agents/skills/flink` 和 `~/.codex/skills/flink`。Codex 不读取 Claude Code 的 `/flink` slash command，通常需要新开会话才会加载新 skill。
+- Agent 使用体验要求：
+  - 首次诊断仍从 `flink-cli diagnose <url>` 开始。
+  - 遇到证书错误要自动加 `--insecure-skip-verify` 重试一次，不要退回手写 `curl -k`。
+  - 遇到 `returned non-JSON response`/`got HTML` 时，说明当前 URL 没拿到 Flink REST JSON，优先检查 YARN proxy/application 是否过期或被登录页拦截。
+  - 看到 `sink_busy_upstream_backpressure` 时，先说明“sink 写入繁忙导致上游反压”，再给证据；不要只说 REST 没发现 high backpressure。
+  - Doris 写入场景优先提醒检查 Stream Load `writeDataTimeMs/loadTimeMs`、`sink.enable.batch-mode`、`sink.buffer-flush.*`、checkpoint 周期、sink 并发、BE load/compaction/tablet 热点。
 - 主要包：
   - `cmd`：命令入口、退出码、JSON envelope。
   - `internal/flink`：URL 规范化、REST client、数据模型和诊断规则。
@@ -136,7 +147,8 @@ CI 参考 `spark-cli`：`.github/workflows/ci.yml` 负责 `go mod tidy`、`go ve
 
 ## 已知边界
 
-- 暂不支持认证、Kerberos、TLS 客户端证书。
+- 暂不支持认证、Kerberos、TLS 客户端证书；普通服务端证书校验问题可用 `--insecure-skip-verify` 绕过。
 - 暂不主动读取 YARN ResourceManager 或 NodeManager 日志。
 - `/jobs/:jobid/vertices/:vertexid/backpressure` 可能触发采样，详情端点失败只记录 warning。
 - gateway 代理如果改写 path 或要求额外 header，需要用户在外层代理侧处理。
+- Doris connector 的自定义 Stream Load metrics 目前不做全量采集，避免大作业输出爆炸；需要进一步自动化时，优先做受限采样和按 sink vertex 名称触发的专项采集。

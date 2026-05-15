@@ -49,7 +49,18 @@ type Vertex struct {
 	EndTime      int64             `json:"end-time,omitempty"`
 	Duration     int64             `json:"duration,omitempty"`
 	Tasks        TaskCounts        `json:"tasks,omitempty"`
+	Metrics      VertexMetrics     `json:"metrics,omitempty"`
 	Backpressure *BackpressureInfo `json:"backpressure,omitempty"`
+}
+
+type VertexMetrics struct {
+	ReadBytes                  float64 `json:"read-bytes,omitempty"`
+	WriteBytes                 float64 `json:"write-bytes,omitempty"`
+	ReadRecords                float64 `json:"read-records,omitempty"`
+	WriteRecords               float64 `json:"write-records,omitempty"`
+	AccumulatedBackpressuredMS float64 `json:"accumulated-backpressured-time,omitempty"`
+	AccumulatedBusyMS          float64 `json:"accumulated-busy-time,omitempty"`
+	AccumulatedIdleMS          float64 `json:"accumulated-idle-time,omitempty"`
 }
 
 type TaskCounts struct {

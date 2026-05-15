@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
+	"strings"
 	"time"
 )
 
@@ -176,6 +178,19 @@ func (e *HTTPError) Error() string {
 	return fmt.Sprintf("GET %s returned HTTP %d", e.Path, e.StatusCode)
 }
 
+type NonJSONResponseError struct {
+	Path    string
+	Prefix  string
+	Message string
+}
+
+func (e *NonJSONResponseError) Error() string {
+	if e.Prefix == "" {
+		return fmt.Sprintf("GET %s returned non-JSON response: %s", e.Path, e.Message)
+	}
+	return fmt.Sprintf("GET %s returned non-JSON response: %s; prefix=%q", e.Path, e.Message, e.Prefix)
+}
+
 func (c *Client) getJSON(ctx context.Context, apiPath string, out any) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.base.Endpoint(apiPath), nil)
 	if err != nil {
@@ -191,8 +206,24 @@ func (c *Client) getJSON(ctx context.Context, apiPath string, out any) error {
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return &HTTPError{Path: apiPath, StatusCode: resp.StatusCode}
 	}
-	if err := json.NewDecoder(resp.Body).Decode(out); err != nil {
-		return fmt.Errorf("decode %s: %w", apiPath, err)
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 16<<20))
+	if err != nil {
+		return fmt.Errorf("read %s: %w", apiPath, err)
+	}
+	if err := json.Unmarshal(body, out); err != nil {
+		return nonJSONError(apiPath, body, err)
 	}
 	return nil
+}
+
+func nonJSONError(apiPath string, body []byte, err error) error {
+	prefix := strings.TrimSpace(string(body))
+	if len(prefix) > 120 {
+		prefix = prefix[:120] + "...(truncated)"
+	}
+	msg := err.Error()
+	if strings.HasPrefix(prefix, "<") {
+		msg = "expected Flink REST JSON but got HTML; the YARN proxy application may be expired, redirected, or serving a login/error page"
+	}
+	return &NonJSONResponseError{Path: apiPath, Prefix: prefix, Message: msg}
 }

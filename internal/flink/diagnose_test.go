@@ -54,6 +54,53 @@ func TestDiagnoseReportsFailuresExceptionsAndCheckpointIssues(t *testing.T) {
 	}
 }
 
+func TestDiagnoseReportsBusySinkWithUpstreamBackpressure(t *testing.T) {
+	snapshot := Snapshot{
+		UIURL: "http://flink.example.com",
+		Jobs: []JobSnapshot{{
+			Overview: JobOverview{
+				JID:   "job-1",
+				Name:  "sync-to-doris",
+				State: "RUNNING",
+			},
+			Detail: JobDetail{
+				Vertices: []Vertex{
+					{
+						ID:     "source",
+						Name:   "Kafka Source",
+						Status: "RUNNING",
+						Metrics: VertexMetrics{
+							AccumulatedBackpressuredMS: 120000,
+							AccumulatedBusyMS:          20000,
+							AccumulatedIdleMS:          1000,
+						},
+					},
+					{
+						ID:          "sink",
+						Name:        "dorisSink: Writer",
+						Parallelism: 96,
+						Status:      "RUNNING",
+						Metrics: VertexMetrics{
+							ReadBytes:                  377424408187,
+							ReadRecords:                13361140,
+							WriteRecords:               480,
+							AccumulatedBackpressuredMS: 0,
+							AccumulatedBusyMS:          24882980,
+							AccumulatedIdleMS:          36574902,
+						},
+						Backpressure: &BackpressureInfo{BackpressureLevel2: "ok"},
+					},
+				},
+			},
+		}},
+	}
+
+	report := Diagnose(snapshot)
+	if !hasFinding(report.Findings, "sink_busy_upstream_backpressure") {
+		t.Fatalf("missing sink busy finding: %+v", report.Findings)
+	}
+}
+
 func hasFinding(findings []Finding, ruleID string) bool {
 	for _, f := range findings {
 		if f.RuleID == ruleID {

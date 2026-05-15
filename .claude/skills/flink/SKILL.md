@@ -1,6 +1,6 @@
 ---
 name: flink-runtime-diagnostics
-description: Use when investigating Apache Flink 1.18 jobs through a Flink Web UI URL, especially YARN application mode jobs, checkpoint failures, root exceptions, failed vertices, or backpressure.
+description: Use when investigating Apache Flink 1.18 jobs through a Flink Web UI URL, especially YARN application mode jobs, checkpoint failures, root exceptions, failed vertices, backpressure, or flame graphs.
 ---
 
 # Flink Runtime Diagnostics
@@ -69,11 +69,22 @@ Use `flink-cli` to query the Flink Web UI REST API and emit compact JSON for ana
 
    If the URL is a full thread-dump page such as `#/task-manager/<taskManagerId>/thread-dump`, `flink-cli` automatically infers the TaskManager id. Read `summary.interpretation`, `summary.states`, `summary.reasons`, and `summary.interesting_threads` first. Do not add `--include-threads` unless full stacks are needed.
 
+7. To inspect a vertex flame graph, run:
+
+   ```bash
+   flink-cli flamegraph <flink-web-ui-url>
+   flink-cli flamegraph --job-id <jobId> --vertex-id <vertexId> --type ON_CPU <flink-web-ui-url>
+   flink-cli flamegraph --job-id <jobId> --vertex-id <vertexId> --type OFF_CPU --subtask-index <n> <flink-web-ui-url>
+   ```
+
+   If the URL is a job overview page, `flink-cli flamegraph` first lists vertices and tells you which `--vertex-id` to use. If the URL is a full flame graph page such as `#/job/running/<jobId>/vertices/<vertexId>/flamegraph`, the CLI infers both ids. Read `summary.top_frames`, `summary.top_leaf_paths`, and `summary.interpretation` first. Do not add `--include-raw` unless the raw flame graph tree is needed.
+
 ## Input handling
 
 `flink-cli` accepts both full URLs and `host:port`; `host:port` defaults to `http://host:port`. Gateway path prefixes are preserved when constructing REST paths.
 If the URL is a full Flink job page such as `#/job/running/<jobId>/overview`, `flink-cli` automatically infers that job id when `--job-id` is omitted.
 If the URL is a full TaskManager thread dump page such as `#/task-manager/<taskManagerId>/thread-dump`, `flink-cli thread-dump` automatically infers that TaskManager id.
+If the URL is a full vertex flame graph page such as `#/job/running/<jobId>/vertices/<vertexId>/flamegraph`, `flink-cli flamegraph` automatically infers both ids.
 
 ## Errors
 
@@ -98,4 +109,5 @@ If the error says `returned non-JSON response` or `got HTML`, the URL did not re
 - Do not ask for screenshots before running `flink-cli diagnose`.
 - Do not assume missing optional endpoints mean the job is unhealthy; check `warnings`.
 - Do not request `--include-snapshot` by default; it can be large.
+- Do not request `flink-cli flamegraph --include-raw` by default; the raw tree can be large.
 - Do not claim YARN queue/resource-manager root cause from Flink REST data alone. Use YARN diagnostics/logs for scheduler-side causes.

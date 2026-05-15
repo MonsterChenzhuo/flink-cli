@@ -75,6 +75,7 @@ http://gateway.example.com/proxy/application_xxx/jobs/overview
 - `/jobs/:jobid/exceptions`：root exception 和异常列表。
 - `/jobs/:jobid/checkpoints`：checkpoint 统计、最近 checkpoint、耗时/状态大小/alignment buffered 的 summary。
 - `/jobs/:jobid/vertices/:vertexid/backpressure`：vertex 反压采样结果。
+- `/jobs/:jobid/vertices/:vertexid/flamegraph`：vertex 火焰图采样结果，仅在执行 `flink-cli flamegraph` 时读取。
 
 REST API 依据 Apache Flink 1.18 官方文档：
 https://nightlies.apache.org/flink/flink-docs-release-1.18/docs/ops/rest_api/
@@ -140,6 +141,24 @@ flink-cli diagnose --job-id <jobId> http://jobmanager-host:8081
 # 控制每个 job 采集 backpressure 的 vertex 数；0 表示不限制
 flink-cli diagnose --max-vertices 50 http://jobmanager-host:8081
 ```
+
+火焰图场景：
+
+```bash
+# 如果 URL 是 job overview 页面，先列出可选 vertex
+flink-cli flamegraph https://gateway/proxy/application_xxx/#/job/running/<jobId>/overview
+
+# 指定 vertex 后读取紧凑火焰图摘要
+flink-cli flamegraph --job-id <jobId> --vertex-id <vertexId> --type ON_CPU http://jobmanager-host:8081
+
+# 看阻塞/等待热点，或下钻单个 subtask
+flink-cli flamegraph --job-id <jobId> --vertex-id <vertexId> --type OFF_CPU --subtask-index 3 http://jobmanager-host:8081
+
+# 需要原始 flame graph 树时显式打开
+flink-cli flamegraph --include-raw --job-id <jobId> --vertex-id <vertexId> http://jobmanager-host:8081
+```
+
+`flamegraph` 默认只输出 `summary.top_frames` / `summary.top_leaf_paths`，避免把完整树塞进 stdout。Flink 火焰图端点可能触发采样，所以 CLI 不会在 `diagnose` 默认流程里批量采集。
 
 错误写到 stderr，格式也是 JSON：
 

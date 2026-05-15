@@ -33,6 +33,16 @@ flink-cli diagnose --job-id <jobId> <flink-web-ui-url>
 flink-cli diagnose --max-vertices 50 <flink-web-ui-url>
 ```
 
+需要看 Flink Web UI 火焰图时使用独立命令，避免默认诊断触发额外采样：
+
+```bash
+flink-cli flamegraph <flink-web-ui-url>
+flink-cli flamegraph --job-id <jobId> --vertex-id <vertexId> --type ON_CPU <flink-web-ui-url>
+flink-cli flamegraph --job-id <jobId> --vertex-id <vertexId> --type OFF_CPU --subtask-index <n> <flink-web-ui-url>
+```
+
+如果 URL 是 job overview 页面，`flamegraph` 会先列 `vertices[]`；如果 URL 是 `#/job/running/<jobId>/vertices/<vertexId>/flamegraph` 页面，会自动提取 job id 和 vertex id。默认只看 `summary.top_frames` / `summary.top_leaf_paths`，不要默认加 `--include-raw`。
+
 ## 输出阅读顺序
 
 优先看：

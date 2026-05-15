@@ -54,6 +54,45 @@ type Vertex struct {
 	Backpressure *BackpressureInfo `json:"backpressure,omitempty"`
 }
 
+type FlameGraphRequest struct {
+	JobID           string
+	VertexID        string
+	Type            string
+	SubtaskIndex    int
+	HasSubtaskIndex bool
+}
+
+type FlameGraph struct {
+	EndTimestamp int64          `json:"endTimestamp,omitempty"`
+	Data         FlameGraphNode `json:"data"`
+}
+
+type FlameGraphNode struct {
+	Name     string           `json:"name"`
+	Value    int64            `json:"value"`
+	Children []FlameGraphNode `json:"children,omitempty"`
+}
+
+type FlameGraphSummary struct {
+	TotalSamples   int64             `json:"total_samples"`
+	EndTimestamp   int64             `json:"end_timestamp,omitempty"`
+	TopFrames      []FlameGraphFrame `json:"top_frames,omitempty"`
+	TopLeafPaths   []FlameGraphPath  `json:"top_leaf_paths,omitempty"`
+	Interpretation string            `json:"interpretation,omitempty"`
+}
+
+type FlameGraphFrame struct {
+	Name  string  `json:"name"`
+	Value int64   `json:"value"`
+	Share float64 `json:"share"`
+}
+
+type FlameGraphPath struct {
+	Path  []string `json:"path"`
+	Value int64    `json:"value"`
+	Share float64  `json:"share"`
+}
+
 type VertexMetrics struct {
 	ReadBytes                  float64 `json:"read-bytes,omitempty"`
 	WriteBytes                 float64 `json:"write-bytes,omitempty"`

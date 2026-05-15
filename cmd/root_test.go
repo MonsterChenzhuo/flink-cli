@@ -346,6 +346,75 @@ func TestThreadDumpCommandListsTaskManagersWhenIDMissing(t *testing.T) {
 	}
 }
 
+func TestFlameGraphCommandListsVerticesWhenVertexIDMissing(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/jobs/overview", func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"jobs":[{"jid":"job-1","name":"orders","state":"RUNNING"}]}`))
+	})
+	mux.HandleFunc("/jobs/job-1", func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"jid":"job-1","name":"orders","state":"RUNNING","vertices":[{"id":"v1","name":"source","parallelism":2,"status":"RUNNING"}]}`))
+	})
+	server := httptest.NewServer(mux)
+	defer server.Close()
+
+	var stdout, stderr bytes.Buffer
+	rc := RunWith(context.Background(), []string{"flamegraph", "--job-id", "job-1", server.URL}, &stdout, &stderr)
+	if rc != 0 {
+		t.Fatalf("RunWith rc = %d, stderr = %s", rc, stderr.String())
+	}
+	var env map[string]any
+	if err := json.Unmarshal(stdout.Bytes(), &env); err != nil {
+		t.Fatalf("stdout is not JSON: %v\n%s", err, stdout.String())
+	}
+	if got, want := env["scenario"], "flamegraph-list-vertices"; got != want {
+		t.Fatalf("scenario = %v, want %v", got, want)
+	}
+	if _, ok := env["vertices"].([]any); !ok {
+		t.Fatalf("vertices missing from envelope: %s", stdout.String())
+	}
+}
+
+func TestFlameGraphCommandEmitsCompactSummary(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/proxy/application_1/jobs/overview", func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"jobs":[{"jid":"29dff7365a0c1823af622b38eeb2bd96","name":"orders","state":"RUNNING"}]}`))
+	})
+	mux.HandleFunc("/proxy/application_1/jobs/29dff7365a0c1823af622b38eeb2bd96/vertices/9f4e2c3d1b0a9876543210fedcba1234/flamegraph", func(w http.ResponseWriter, r *http.Request) {
+		if got, want := r.URL.Query().Get("type"), "OFF_CPU"; got != want {
+			t.Fatalf("flamegraph type = %q, want %q", got, want)
+		}
+		_, _ = w.Write([]byte(`{"endTimestamp":1234,"data":{"name":"root","value":10,"children":[{"name":"java.net.SocketInputStream.socketRead0","value":6},{"name":"org.apache.flink.runtime.io.network","value":4}]}}`))
+	})
+	server := httptest.NewServer(mux)
+	defer server.Close()
+
+	rawURL := server.URL + "/proxy/application_1/#/job/running/29dff7365a0c1823af622b38eeb2bd96/vertices/9f4e2c3d1b0a9876543210fedcba1234/flamegraph"
+	var stdout, stderr bytes.Buffer
+	rc := RunWith(context.Background(), []string{"flamegraph", "--type", "OFF_CPU", rawURL}, &stdout, &stderr)
+	if rc != 0 {
+		t.Fatalf("RunWith rc = %d, stderr = %s", rc, stderr.String())
+	}
+	var env map[string]any
+	if err := json.Unmarshal(stdout.Bytes(), &env); err != nil {
+		t.Fatalf("stdout is not JSON: %v\n%s", err, stdout.String())
+	}
+	if got, want := env["scenario"], "flamegraph"; got != want {
+		t.Fatalf("scenario = %v, want %v", got, want)
+	}
+	summary := env["summary"].(map[string]any)
+	if got, want := summary["total_samples"], float64(10); got != want {
+		t.Fatalf("total_samples = %v, want %v", got, want)
+	}
+	topFrames := summary["top_frames"].([]any)
+	first := topFrames[0].(map[string]any)
+	if got, want := first["name"], "java.net.SocketInputStream.socketRead0"; got != want {
+		t.Fatalf("top frame = %v, want %v", got, want)
+	}
+	if _, ok := env["flamegraph"]; ok {
+		t.Fatalf("raw flamegraph should be omitted by default: %s", stdout.String())
+	}
+}
+
 func TestDiagnoseCommandQuietWarningsSummarizesWarnings(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/jobs/overview", func(w http.ResponseWriter, r *http.Request) {

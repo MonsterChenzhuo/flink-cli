@@ -16,6 +16,9 @@ flink-cli diagnose --insecure-skip-verify <flink-web-ui-url>
 flink-cli thread-dump <flink-web-ui-url>
 flink-cli thread-dump --taskmanager-id <taskManagerId> <flink-web-ui-url>
 flink-cli thread-dump --include-threads <flink-web-ui-url>
+flink-cli flamegraph <flink-web-ui-url>
+flink-cli flamegraph --job-id <jobId> --vertex-id <vertexId> --type ON_CPU <flink-web-ui-url>
+flink-cli flamegraph --job-id <jobId> --vertex-id <vertexId> --type OFF_CPU --subtask-index <n> <flink-web-ui-url>
 ```
 
 示例：
@@ -34,6 +37,7 @@ URL 规范化规则：
 - 例如 `http://gateway/proxy/application_1/` 会请求 `http://gateway/proxy/application_1/jobs/overview`。
 - 如果用户传入 Web UI 作业页完整 URL，例如 `#/job/running/<jobId>/overview`，CLI 会自动从 fragment 里提取 job id，相当于补上 `--job-id <jobId>`。
 - 如果用户传入 TaskManager thread dump 页面完整 URL，例如 `#/task-manager/<taskManagerId>/thread-dump`，`thread-dump` 命令会自动从 fragment 里提取 TaskManager id。
+- 如果用户传入 vertex flame graph 页面完整 URL，例如 `#/job/running/<jobId>/vertices/<vertexId>/flamegraph`，`flamegraph` 命令会自动从 fragment 里提取 job id 和 vertex id。
 - 内网 HTTPS YARN/Flink 网关如果使用自签名或非标准证书，使用 `--insecure-skip-verify`。这是显式开关，不默认跳过证书校验。
 - 真实回归 URL 形态示例：`https://110.238.78.142:9022/component/Yarn/ResourceManager/36/proxy/application_1777980975440_135435/`，需要保留 `/component/Yarn/ResourceManager/.../proxy/application_...` 这段 path。
 
@@ -53,6 +57,7 @@ https://nightlies.apache.org/flink/flink-docs-release-1.18/docs/ops/rest_api/
 - `GET /jobs/:jobid/exceptions`：root exception 和异常列表。
 - `GET /jobs/:jobid/checkpoints`：checkpoint 计数、最近 checkpoint 和 summary 分位/均值统计。注意 Flink 可能把 summary 数值返回成 `88272.0` 这类浮点 JSON，类型要兼容整数和浮点。
 - `GET /jobs/:jobid/vertices/:vertexid/backpressure`：vertex 反压信息。
+- `GET /jobs/:jobid/vertices/:vertexid/flamegraph`：vertex 火焰图信息，仅在执行 `flink-cli flamegraph` 时读取；支持 `type=FULL|ON_CPU|OFF_CPU` 和 `subtaskindex`。
 - `GET /jobs/:jobid/vertices/:vertexid/metrics`：对 Doris Writer vertex 做受限采样，提取 Stream Load flush/load/writeData 指标。
 - `GET /taskmanagers`：列出 TaskManager。
 - `GET /taskmanagers/:taskmanagerid/thread-dump`：采集指定 TaskManager 线程栈，默认只输出状态统计和可疑线程摘要。
@@ -133,6 +138,13 @@ stderr 输出 JSON error：
 - 如果 `summary.interesting_count=0`，`summary.interpretation` 会说明本次快照未发现可疑线程；这不等于作业没有问题，只说明该 TaskManager 的瞬时线程栈没有命中特征，需要结合 metrics 或多 TM/多次采样。
 - 用户明确需要完整线程栈时才使用 `--include-threads`。
 
+`flamegraph` 输出规则：
+
+- 如果只有 job URL 或 job id，先输出 `scenario=flamegraph-list-vertices` 和 `vertices[]`，让 agent 选择具体 vertex 后再采样。
+- 默认输出 `summary.total_samples`、`summary.top_frames`、`summary.top_leaf_paths` 和 `summary.interpretation`，避免完整火焰图树撑爆 AI 上下文。
+- `--type ON_CPU` 用于 CPU 热点，`--type OFF_CPU` 用于阻塞/IO/锁等待，`--type FULL` 用于粗看整体。
+- 用户明确需要原始树时才使用 `--include-raw`。
+
 ## 开发约定
 
 - 语言：Go 1.22。
@@ -152,6 +164,7 @@ stderr 输出 JSON error：
   - Doris Writer 场景还要看 `finding.evidence.interpretation`：如果 `primary_bottleneck=doris_stream_load_write_data` 且 `write_data_share_of_load` 接近 1，说明主要耗在 Stream Load 写数据/等待 Doris 消化，不要把几十毫秒的 commit/publish 当主因。
   - Doris 写入场景优先提醒检查 Stream Load `writeDataTimeMs/loadTimeMs`、`sink.enable.batch-mode`、`sink.buffer-flush.*`、checkpoint 周期、sink 并发、BE load/compaction/tablet 热点。
   - 需要线程栈时使用 `flink-cli thread-dump <url>`；如果 URL 是 `#/task-manager/<id>/thread-dump` 页面，直接传完整 URL。默认不要加 `--include-threads`，先看摘要。
+  - 需要火焰图时使用 `flink-cli flamegraph <url>`；如果 URL 是 job overview 页面，先看 `vertices[]` 再带 `--vertex-id` 下钻。默认不要加 `--include-raw`，先看摘要。
 - 主要包：
   - `cmd`：命令入口、退出码、JSON envelope。
   - `internal/flink`：URL 规范化、REST client、数据模型和诊断规则。

@@ -102,6 +102,24 @@ func ExtractTaskManagerIDFromWebURL(raw string) string {
 	return extractAfterRouteToken(u.Path, "task-manager")
 }
 
+func ExtractVertexIDFromWebURL(raw string) string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return ""
+	}
+	if !strings.Contains(raw, "://") {
+		raw = "http://" + raw
+	}
+	u, err := url.Parse(raw)
+	if err != nil {
+		return ""
+	}
+	if id := extractAfterRouteToken(u.Fragment, "vertices"); id != "" {
+		return id
+	}
+	return extractAfterRouteToken(u.Path, "vertices")
+}
+
 func extractAfterRouteToken(route, token string) string {
 	parts := splitRoute(route)
 	for i := 0; i+1 < len(parts); i++ {

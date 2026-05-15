@@ -46,6 +46,13 @@ func TestExtractTaskManagerIDFromWebURLFragment(t *testing.T) {
 	}
 }
 
+func TestExtractVertexIDFromWebURLFragment(t *testing.T) {
+	raw := "https://gateway/proxy/application_1/#/job/running/29dff7365a0c1823af622b38eeb2bd96/vertices/9f4e2c3d1b0a9876543210fedcba1234/flamegraph"
+	if got, want := ExtractVertexIDFromWebURL(raw), "9f4e2c3d1b0a9876543210fedcba1234"; got != want {
+		t.Fatalf("ExtractVertexIDFromWebURL = %q, want %q", got, want)
+	}
+}
+
 func TestClientCollectsJobSnapshot(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/flink/jobs/overview", func(w http.ResponseWriter, r *http.Request) {
@@ -291,6 +298,46 @@ func TestSummarizeDorisSinkMetricsRoundsAndDerivesReadableFields(t *testing.T) {
 	}
 	if got, want := summary.CommitAndPublishTimeSecMean, 0.046; got != want {
 		t.Fatalf("commit seconds = %v, want %v", got, want)
+	}
+}
+
+func TestClientGetsFlameGraphWithTypeAndSubtask(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/jobs/job-1/vertices/v1/flamegraph", func(w http.ResponseWriter, r *http.Request) {
+		if got, want := r.URL.Query().Get("type"), "ON_CPU"; got != want {
+			t.Fatalf("flamegraph type = %q, want %q", got, want)
+		}
+		if got, want := r.URL.Query().Get("subtaskindex"), "3"; got != want {
+			t.Fatalf("subtaskindex = %q, want %q", got, want)
+		}
+		_, _ = w.Write([]byte(`{"endTimestamp":1234,"data":{"name":"root","value":10,"children":[{"name":"hot.Frame","value":7},{"name":"cold.Frame","value":3}]}}`))
+	})
+	server := httptest.NewServer(mux)
+	defer server.Close()
+
+	client, err := NewClient(server.URL)
+	if err != nil {
+		t.Fatalf("NewClient returned error: %v", err)
+	}
+	graph, err := client.GetFlameGraph(context.Background(), FlameGraphRequest{
+		JobID:           "job-1",
+		VertexID:        "v1",
+		Type:            "ON_CPU",
+		SubtaskIndex:    3,
+		HasSubtaskIndex: true,
+	})
+	if err != nil {
+		t.Fatalf("GetFlameGraph returned error: %v", err)
+	}
+	summary := SummarizeFlameGraph(graph, 5)
+	if got, want := summary.TotalSamples, int64(10); got != want {
+		t.Fatalf("total samples = %d, want %d", got, want)
+	}
+	if got, want := summary.TopFrames[0].Name, "hot.Frame"; got != want {
+		t.Fatalf("top frame = %q, want %q", got, want)
+	}
+	if got, want := summary.TopFrames[0].Share, 0.7; got != want {
+		t.Fatalf("top frame share = %v, want %v", got, want)
 	}
 }
 

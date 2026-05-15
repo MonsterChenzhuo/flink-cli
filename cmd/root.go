@@ -45,6 +45,7 @@ type state struct {
 	timeout          time.Duration
 	includeSnapshot  bool
 	jobID            string
+	vertexID         string
 	taskManagerID    string
 	maxVertices      int
 	listJobs         bool
@@ -53,6 +54,10 @@ type state struct {
 	insecureTLS      bool
 	includeThreads   bool
 	maxThreads       int
+	flameGraphType   string
+	subtaskIndex     int
+	topFrames        int
+	includeRaw       bool
 }
 
 type listJobsEnvelope struct {
@@ -78,6 +83,22 @@ type threadDumpEnvelope struct {
 	NextActions     []string                    `json:"next_actions"`
 }
 
+type flameGraphEnvelope struct {
+	SchemaVersion   string                   `json:"schema_version"`
+	Scenario        string                   `json:"scenario"`
+	UIURL           string                   `json:"ui_url"`
+	ElapsedMs       int64                    `json:"elapsed_ms"`
+	SourceEndpoints []string                 `json:"source_endpoints"`
+	JobID           string                   `json:"job_id,omitempty"`
+	VertexID        string                   `json:"vertex_id,omitempty"`
+	Type            string                   `json:"type,omitempty"`
+	SubtaskIndex    *int                     `json:"subtask_index,omitempty"`
+	Vertices        []flink.Vertex           `json:"vertices,omitempty"`
+	Summary         *flink.FlameGraphSummary `json:"summary,omitempty"`
+	FlameGraph      *flink.FlameGraph        `json:"flamegraph,omitempty"`
+	NextActions     []string                 `json:"next_actions"`
+}
+
 func newRootCmd() *cobra.Command {
 	st := &state{}
 	root := &cobra.Command{
@@ -91,6 +112,7 @@ func newRootCmd() *cobra.Command {
 	root.PersistentFlags().DurationVar(&st.timeout, "timeout", 30*time.Second, "HTTP timeout for Flink REST API calls")
 	root.AddCommand(newDiagnoseCmd(st))
 	root.AddCommand(newThreadDumpCmd(st))
+	root.AddCommand(newFlameGraphCmd(st))
 	root.AddCommand(newVersionCmd())
 	return root
 }
@@ -129,6 +151,26 @@ func newThreadDumpCmd(st *state) *cobra.Command {
 	c.Flags().BoolVar(&st.includeThreads, "include-threads", false, "include full thread dump entries in stdout")
 	c.Flags().StringVar(&st.taskManagerID, "taskmanager-id", "", "TaskManager id from /taskmanagers; inferred from #/task-manager/<id>/thread-dump URLs when omitted")
 	c.Flags().IntVar(&st.maxThreads, "max-threads", 20, "maximum interesting thread summaries to include")
+	return c
+}
+
+func newFlameGraphCmd(st *state) *cobra.Command {
+	c := &cobra.Command{
+		Use:   "flamegraph <flink-web-ui-url>",
+		Short: "Collect a vertex flame graph and emit compact JSON.",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			exitCode = runFlameGraph(cmd.Context(), args[0], *st, cmd.OutOrStdout(), cmd.ErrOrStderr())
+			return nil
+		},
+	}
+	c.Flags().BoolVar(&st.insecureTLS, "insecure-skip-verify", false, "skip HTTPS server certificate verification for internal YARN/Flink gateways")
+	c.Flags().StringVar(&st.jobID, "job-id", "", "Flink job id; inferred from #/job/... URLs when omitted")
+	c.Flags().StringVar(&st.vertexID, "vertex-id", "", "Flink vertex id; inferred from #/job/.../vertices/<id>/... URLs when omitted")
+	c.Flags().StringVar(&st.flameGraphType, "type", "FULL", "flame graph type: FULL, ON_CPU, or OFF_CPU")
+	c.Flags().IntVar(&st.subtaskIndex, "subtask-index", -1, "specific subtask index to sample; -1 means aggregate vertex flame graph")
+	c.Flags().IntVar(&st.topFrames, "top-frames", 10, "maximum top frames and leaf paths to include")
+	c.Flags().BoolVar(&st.includeRaw, "include-raw", false, "include raw flame graph tree in stdout")
 	return c
 }
 
@@ -261,6 +303,114 @@ func runThreadDump(ctx context.Context, rawURL string, st state, stdout, stderr 
 	}
 	if st.includeThreads {
 		env.ThreadInfos = dump.ThreadInfos
+	}
+	if err := output.WriteJSON(stdout, env); err != nil {
+		apperr.WriteJSON(stderr, apperr.New("OUTPUT_ERROR", err.Error(), "检查 stdout 是否可写"))
+		return 1
+	}
+	return 0
+}
+
+func runFlameGraph(ctx context.Context, rawURL string, st state, stdout, stderr io.Writer) int {
+	if st.jobID == "" {
+		st.jobID = flink.ExtractJobIDFromWebURL(rawURL)
+	}
+	if st.vertexID == "" {
+		st.vertexID = flink.ExtractVertexIDFromWebURL(rawURL)
+	}
+	client, err := flink.NewClientWithHTTP(rawURL, newHTTPClient(st.timeout, st.insecureTLS))
+	if err != nil {
+		apperr.WriteJSON(stderr, apperr.New("URL_INVALID", err.Error(), "传入完整的 Flink Web UI URL，例如 http://jobmanager:8081 或带 gateway path 的代理地址"))
+		return 2
+	}
+	start := time.Now()
+	base, _ := flink.NormalizeBaseURL(rawURL)
+	if st.jobID == "" {
+		jobs, err := client.ListJobs(ctx)
+		if err != nil {
+			apperr.WriteJSON(stderr, apperr.New("FLINK_API_UNREACHABLE", err.Error(), flinkAPIHint("确认 URL 可访问，并且 /jobs/overview 可读取")))
+			return 3
+		}
+		env := listJobsEnvelope{
+			SchemaVersion:   "v1",
+			Scenario:        "list-jobs",
+			UIURL:           base.String(),
+			ElapsedMs:       time.Since(start).Milliseconds(),
+			SourceEndpoints: []string{"/jobs/overview"},
+			Jobs:            jobs,
+			NextActions: []string{
+				"选择目标 jobs[].jid 后执行：flink-cli flamegraph --job-id <jobId> <url>。",
+				"如果已经在 Flink Web UI 的 job 页面，可直接传完整 URL，CLI 会从 fragment 推断 job id。",
+			},
+		}
+		if err := output.WriteJSON(stdout, env); err != nil {
+			apperr.WriteJSON(stderr, apperr.New("OUTPUT_ERROR", err.Error(), "检查 stdout 是否可写"))
+			return 1
+		}
+		return 0
+	}
+	if st.vertexID == "" {
+		detail, err := client.GetJobDetail(ctx, st.jobID)
+		if err != nil {
+			apperr.WriteJSON(stderr, apperr.New("FLINK_API_UNREACHABLE", err.Error(), flinkAPIHint("确认 job id 存在，并且 /jobs/<jobid> 可读取")))
+			return 3
+		}
+		env := flameGraphEnvelope{
+			SchemaVersion:   "v1",
+			Scenario:        "flamegraph-list-vertices",
+			UIURL:           base.String(),
+			ElapsedMs:       time.Since(start).Milliseconds(),
+			SourceEndpoints: []string{"/jobs/" + st.jobID},
+			JobID:           st.jobID,
+			Vertices:        detail.Vertices,
+			NextActions: []string{
+				"选择 vertices[].id 后执行：flink-cli flamegraph --job-id <jobId> --vertex-id <vertexId> <url>。",
+				"可用 --type ON_CPU 看 CPU 热点，--type OFF_CPU 看阻塞/等待；需要单个 subtask 时加 --subtask-index <n>。",
+			},
+		}
+		if err := output.WriteJSON(stdout, env); err != nil {
+			apperr.WriteJSON(stderr, apperr.New("OUTPUT_ERROR", err.Error(), "检查 stdout 是否可写"))
+			return 1
+		}
+		return 0
+	}
+	req := flink.FlameGraphRequest{
+		JobID:    st.jobID,
+		VertexID: st.vertexID,
+		Type:     st.flameGraphType,
+	}
+	var subtaskIndex *int
+	if st.subtaskIndex >= 0 {
+		req.SubtaskIndex = st.subtaskIndex
+		req.HasSubtaskIndex = true
+		subtaskIndex = &st.subtaskIndex
+	}
+	graph, err := client.GetFlameGraph(ctx, req)
+	if err != nil {
+		apperr.WriteJSON(stderr, apperr.New("FLINK_API_UNREACHABLE", err.Error(), flinkAPIHint("确认 job/vertex 仍在运行、火焰图已启用，并且 /jobs/<jobid>/vertices/<vertexid>/flamegraph 可读取")))
+		return 3
+	}
+	sourceEndpoint := "/jobs/" + st.jobID + "/vertices/" + st.vertexID + "/flamegraph"
+	summary := flink.SummarizeFlameGraph(graph, st.topFrames)
+	env := flameGraphEnvelope{
+		SchemaVersion:   "v1",
+		Scenario:        "flamegraph",
+		UIURL:           base.String(),
+		ElapsedMs:       time.Since(start).Milliseconds(),
+		SourceEndpoints: []string{sourceEndpoint},
+		JobID:           st.jobID,
+		VertexID:        st.vertexID,
+		Type:            st.flameGraphType,
+		SubtaskIndex:    subtaskIndex,
+		Summary:         &summary,
+		NextActions: []string{
+			"优先看 summary.top_frames 和 summary.top_leaf_paths；share 越高说明该 frame/path 在本次采样占比越大。",
+			"ON_CPU 用于定位 CPU 热点；OFF_CPU 用于定位阻塞、IO 等待或锁等待；FULL 用于粗看整体。",
+			"需要原始火焰图树时重新执行：flink-cli flamegraph --include-raw --job-id <jobId> --vertex-id <vertexId> <url>。",
+		},
+	}
+	if st.includeRaw {
+		env.FlameGraph = &graph
 	}
 	if err := output.WriteJSON(stdout, env); err != nil {
 		apperr.WriteJSON(stderr, apperr.New("OUTPUT_ERROR", err.Error(), "检查 stdout 是否可写"))

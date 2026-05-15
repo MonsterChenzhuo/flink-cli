@@ -69,6 +69,18 @@ func (c *Client) ListTaskManagers(ctx context.Context) ([]TaskManagerOverview, e
 	return response.TaskManagers, nil
 }
 
+func (c *Client) GetJobDetail(ctx context.Context, jobID string) (JobDetail, error) {
+	jobID = strings.TrimSpace(jobID)
+	if jobID == "" {
+		return JobDetail{}, fmt.Errorf("empty job id")
+	}
+	var detail JobDetail
+	if err := c.getJSON(ctx, "/jobs/"+url.PathEscape(jobID), &detail); err != nil {
+		return JobDetail{}, err
+	}
+	return detail, nil
+}
+
 func (c *Client) GetThreadDump(ctx context.Context, taskManagerID string) (ThreadDump, error) {
 	taskManagerID = strings.TrimSpace(taskManagerID)
 	if taskManagerID == "" {
@@ -79,6 +91,30 @@ func (c *Client) GetThreadDump(ctx context.Context, taskManagerID string) (Threa
 		return ThreadDump{}, err
 	}
 	return dump, nil
+}
+
+func (c *Client) GetFlameGraph(ctx context.Context, req FlameGraphRequest) (FlameGraph, error) {
+	jobID := strings.TrimSpace(req.JobID)
+	vertexID := strings.TrimSpace(req.VertexID)
+	if jobID == "" {
+		return FlameGraph{}, fmt.Errorf("empty job id")
+	}
+	if vertexID == "" {
+		return FlameGraph{}, fmt.Errorf("empty vertex id")
+	}
+	query := url.Values{}
+	if req.Type != "" {
+		query.Set("type", req.Type)
+	}
+	if req.HasSubtaskIndex {
+		query.Set("subtaskindex", strconv.Itoa(req.SubtaskIndex))
+	}
+	var graph FlameGraph
+	apiPath := "/jobs/" + url.PathEscape(jobID) + "/vertices/" + url.PathEscape(vertexID) + "/flamegraph"
+	if err := c.getJSONWithQuery(ctx, apiPath, query, &graph); err != nil {
+		return FlameGraph{}, err
+	}
+	return graph, nil
 }
 
 func (c *Client) CollectWithOptions(ctx context.Context, opts CollectOptions) (Snapshot, error) {

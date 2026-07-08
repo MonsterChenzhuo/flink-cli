@@ -141,7 +141,9 @@ stderr 输出 JSON error：
 `flamegraph` 输出规则：
 
 - 如果只有 job URL 或 job id，先输出 `scenario=flamegraph-list-vertices` 和 `vertices[]`，让 agent 选择具体 vertex 后再采样。
-- 默认输出 `summary.total_samples`、`summary.top_frames`、`summary.top_leaf_paths` 和 `summary.interpretation`，避免完整火焰图树撑爆 AI 上下文。
+- 默认输出 `summary.total_samples`、`summary.top_self_frames`、`summary.top_frames`、`summary.top_leaf_paths` 和 `summary.interpretation`，避免完整火焰图树撑爆 AI 上下文。
+- `summary.top_self_frames` 是按方法名聚合的自身耗时（self-time = 节点 value 减去子节点 value 之和），`top_self_frames[0]` 直接对应真正的热点方法（CPU 或阻塞）。这是定位瓶颈的首选视图。
+- `summary.top_frames` 是累计耗时，最外层栈帧（`Thread.run`、`Task.doRun`）share 会接近 1 但没有定位价值，只作辅助，不要用它排序热点。之前 agent 因为只看 top_frames 拿到一堆 share≈1 的包装帧，被迫放弃 CLI 手写 curl+递归解析原始树才算出 self-time；现在工具直接给出 top_self_frames，不应再手工解析。
 - `--type ON_CPU` 用于 CPU 热点，`--type OFF_CPU` 用于阻塞/IO/锁等待，`--type FULL` 用于粗看整体。
 - 用户明确需要原始树时才使用 `--include-raw`。
 

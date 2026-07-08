@@ -404,7 +404,7 @@ func runFlameGraph(ctx context.Context, rawURL string, st state, stdout, stderr 
 		SubtaskIndex:    subtaskIndex,
 		Summary:         &summary,
 		NextActions: []string{
-			"优先看 summary.top_frames 和 summary.top_leaf_paths；share 越高说明该 frame/path 在本次采样占比越大。",
+			"优先看 summary.top_self_frames：按方法名聚合的自身耗时（self-time），share 最高的就是真正的热点方法（CPU 或阻塞）。不要只看 top_frames，那是累计耗时，最外层栈帧 share 接近 1 但没有定位价值。",
 			"ON_CPU 用于定位 CPU 热点；OFF_CPU 用于定位阻塞、IO 等待或锁等待；FULL 用于粗看整体。",
 			"需要原始火焰图树时重新执行：flink-cli flamegraph --include-raw --job-id <jobId> --vertex-id <vertexId> <url>。",
 		},

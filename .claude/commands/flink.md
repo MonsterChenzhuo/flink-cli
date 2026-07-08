@@ -33,7 +33,7 @@ argument-hint: "<flink-web-ui-url> [jobId]"
 6. 优先阅读输出里的 `diagnosis`、`primary_finding`、`summary`、`findings`、`next_actions`、`warnings`。
 7. 如果出现 `sink_busy_upstream_backpressure`，不要因为 sink 自身 backpressure=ok 就判断无问题；它通常表示 sink/外部系统写入吞吐导致上游反压。Doris 场景优先读取 `evidence.doris_sink_metrics.summary` 里的 `per_flush_*`、`load_time_*`、`write_data_time_*`、`load_mib_per_sec_per_subtask`，再分析批次大小、checkpoint 周期和 sink 并发。
 8. thread dump 输出优先阅读 `summary.states`、`summary.reasons` 和 `summary.interesting_threads`；默认不要加 `--include-threads`。
-9. flamegraph 输出优先阅读 `summary.top_frames`、`summary.top_leaf_paths` 和 `summary.interpretation`；默认不要加 `--include-raw`。
+9. flamegraph 输出优先阅读 `summary.top_self_frames`：它按方法名聚合自身耗时（self-time），`top_self_frames[0]` 就是真正的热点方法（CPU 或阻塞）。不要用 `summary.top_frames` 排序，那是累计耗时，最外层栈帧（`Thread.run`、`Task.doRun`）share 接近 1 但没有定位价值。再结合 `summary.top_leaf_paths` 和 `summary.interpretation`；默认不要加 `--include-raw`。
 10. 默认不要加 `--include-snapshot`，除非需要完整 REST 原始数据。
 11. 如果需要先列出可用 job，运行：
 

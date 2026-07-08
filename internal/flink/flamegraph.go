@@ -19,7 +19,21 @@ func SummarizeFlameGraph(graph FlameGraph, topN int) FlameGraphSummary {
 	}
 	var frames []FlameGraphFrame
 	var paths []FlameGraphPath
-	collectFlameGraphRows(graph.Data, total, nil, true, &frames, &paths)
+	selfByName := map[string]int64{}
+	collectFlameGraphRows(graph.Data, total, nil, true, &frames, &paths, selfByName)
+	selfFrames := make([]FlameGraphFrame, 0, len(selfByName))
+	for name, self := range selfByName {
+		if self <= 0 {
+			continue
+		}
+		selfFrames = append(selfFrames, FlameGraphFrame{Name: name, Value: self, Share: roundShare(self, total)})
+	}
+	sort.SliceStable(selfFrames, func(i, j int) bool {
+		if selfFrames[i].Value != selfFrames[j].Value {
+			return selfFrames[i].Value > selfFrames[j].Value
+		}
+		return selfFrames[i].Name < selfFrames[j].Name
+	})
 	sort.SliceStable(frames, func(i, j int) bool {
 		if frames[i].Value != frames[j].Value {
 			return frames[i].Value > frames[j].Value
@@ -32,25 +46,38 @@ func SummarizeFlameGraph(graph FlameGraph, topN int) FlameGraphSummary {
 		}
 		return len(paths[i].Path) < len(paths[j].Path)
 	})
+	if len(selfFrames) > topN {
+		selfFrames = selfFrames[:topN]
+	}
 	if len(frames) > topN {
 		frames = frames[:topN]
 	}
 	if len(paths) > topN {
 		paths = paths[:topN]
 	}
+	summary.TopSelfFrames = selfFrames
 	summary.TopFrames = frames
 	summary.TopLeafPaths = paths
-	if len(frames) > 0 {
-		summary.Interpretation = "优先看 top_frames[0] 和 top_leaf_paths[0]；share 表示该 frame/path 在本次采样中的占比。ON_CPU 偏 CPU 热点，OFF_CPU 偏阻塞/等待，FULL 混合两者。"
+	if len(selfFrames) > 0 {
+		summary.Interpretation = "优先看 top_self_frames[0]：它是按方法名聚合的自身耗时（self-time），share 表示该方法自身占本次采样的比例，直接对应 CPU 热点或阻塞点。top_frames 是累计耗时，最外层调用栈（Thread.run 等）share 会接近 1 但没有定位价值，只作辅助。ON_CPU 偏 CPU 热点，OFF_CPU 偏阻塞/等待，FULL 混合两者。"
+	} else if len(frames) > 0 {
+		summary.Interpretation = "本次采样未聚合出自身耗时较高的方法；可回退看 top_frames 和 top_leaf_paths。ON_CPU 偏 CPU 热点，OFF_CPU 偏阻塞/等待，FULL 混合两者。"
 	}
 	return summary
 }
 
-func collectFlameGraphRows(node FlameGraphNode, total int64, path []string, root bool, frames *[]FlameGraphFrame, paths *[]FlameGraphPath) {
+func collectFlameGraphRows(node FlameGraphNode, total int64, path []string, root bool, frames *[]FlameGraphFrame, paths *[]FlameGraphPath, selfByName map[string]int64) {
 	nextPath := path
 	if !root && node.Name != "" {
 		*frames = append(*frames, FlameGraphFrame{Name: node.Name, Value: node.Value, Share: roundShare(node.Value, total)})
 		nextPath = append(append([]string{}, path...), node.Name)
+		var childrenValue int64
+		for _, child := range node.Children {
+			childrenValue += child.Value
+		}
+		if self := node.Value - childrenValue; self > 0 && selfByName != nil {
+			selfByName[node.Name] += self
+		}
 	}
 	if len(node.Children) == 0 {
 		if !root && len(nextPath) > 0 {
@@ -59,7 +86,7 @@ func collectFlameGraphRows(node FlameGraphNode, total int64, path []string, root
 		return
 	}
 	for _, child := range node.Children {
-		collectFlameGraphRows(child, total, nextPath, false, frames, paths)
+		collectFlameGraphRows(child, total, nextPath, false, frames, paths, selfByName)
 	}
 }
 

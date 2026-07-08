@@ -76,6 +76,7 @@ type FlameGraphNode struct {
 type FlameGraphSummary struct {
 	TotalSamples   int64             `json:"total_samples"`
 	EndTimestamp   int64             `json:"end_timestamp,omitempty"`
+	TopSelfFrames  []FlameGraphFrame `json:"top_self_frames,omitempty"`
 	TopFrames      []FlameGraphFrame `json:"top_frames,omitempty"`
 	TopLeafPaths   []FlameGraphPath  `json:"top_leaf_paths,omitempty"`
 	Interpretation string            `json:"interpretation,omitempty"`

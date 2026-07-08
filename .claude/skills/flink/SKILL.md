@@ -77,7 +77,7 @@ Use `flink-cli` to query the Flink Web UI REST API and emit compact JSON for ana
    flink-cli flamegraph --job-id <jobId> --vertex-id <vertexId> --type OFF_CPU --subtask-index <n> <flink-web-ui-url>
    ```
 
-   If the URL is a job overview page, `flink-cli flamegraph` first lists vertices and tells you which `--vertex-id` to use. If the URL is a full flame graph page such as `#/job/running/<jobId>/vertices/<vertexId>/flamegraph`, the CLI infers both ids. Read `summary.top_frames`, `summary.top_leaf_paths`, and `summary.interpretation` first. Do not add `--include-raw` unless the raw flame graph tree is needed.
+   If the URL is a job overview page, `flink-cli flamegraph` first lists vertices and tells you which `--vertex-id` to use. If the URL is a full flame graph page such as `#/job/running/<jobId>/vertices/<vertexId>/flamegraph`, the CLI infers both ids. Read `summary.top_self_frames` first: it aggregates self-time by method name, so `top_self_frames[0]` is the real hotspot (CPU or blocking). Do NOT rank by `summary.top_frames` — those are cumulative values, so the outermost stack frames (`Thread.run`, `Task.doRun`, …) show `share`≈1 but carry no localization value. Also read `summary.top_leaf_paths` and `summary.interpretation`. Do not add `--include-raw` unless the raw flame graph tree is needed.
 
 ## Input handling
 

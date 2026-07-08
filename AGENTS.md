@@ -41,7 +41,7 @@ flink-cli flamegraph --job-id <jobId> --vertex-id <vertexId> --type ON_CPU <flin
 flink-cli flamegraph --job-id <jobId> --vertex-id <vertexId> --type OFF_CPU --subtask-index <n> <flink-web-ui-url>
 ```
 
-如果 URL 是 job overview 页面，`flamegraph` 会先列 `vertices[]`；如果 URL 是 `#/job/running/<jobId>/vertices/<vertexId>/flamegraph` 页面，会自动提取 job id 和 vertex id。默认只看 `summary.top_frames` / `summary.top_leaf_paths`，不要默认加 `--include-raw`。
+如果 URL 是 job overview 页面，`flamegraph` 会先列 `vertices[]`；如果 URL 是 `#/job/running/<jobId>/vertices/<vertexId>/flamegraph` 页面，会自动提取 job id 和 vertex id。优先看 `summary.top_self_frames`：它按方法名聚合自身耗时（self-time），`top_self_frames[0]` 就是真正的热点方法。不要用 `summary.top_frames` 排序，那是累计耗时，最外层栈帧 share 接近 1 但没有定位价值。再结合 `summary.top_leaf_paths`，不要默认加 `--include-raw`。
 
 ## 输出阅读顺序
 

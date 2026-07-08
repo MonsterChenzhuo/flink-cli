@@ -139,6 +139,68 @@ func TestDiagnoseReportsBusySinkWithUpstreamBackpressure(t *testing.T) {
 	}
 }
 
+// When backpressure propagates from the source down the chain and terminates
+// at a vertex (that vertex is busy but not itself backpressured, and everything
+// downstream is idle), diagnose must identify that termination vertex as the
+// bottleneck instead of just flagging the source. This mirrors the real
+// finderX_data_base_pre case: source=high -> flatmap=low -> process-pre
+// (terminus) -> downstream idle.
+func TestDiagnoseIdentifiesBackpressureChainBottleneck(t *testing.T) {
+	high := &BackpressureInfo{BackpressureLevel: "high"}
+	low := &BackpressureInfo{BackpressureLevel: "low"}
+	ok := &BackpressureInfo{BackpressureLevel: "ok"}
+	snapshot := Snapshot{
+		UIURL: "http://flink.example.com",
+		Jobs: []JobSnapshot{{
+			Overview: JobOverview{JID: "job-1", Name: "finderX", State: "RUNNING"},
+			Detail: JobDetail{
+				Vertices: []Vertex{
+					{ID: "source", Name: "Source: client-source", Status: "RUNNING", Backpressure: high,
+						Metrics: VertexMetrics{AccumulatedBackpressuredMS: 60000, AccumulatedBusyMS: 20000}},
+					{ID: "flatmap", Name: "flat-map", Status: "RUNNING", Backpressure: low,
+						Metrics: VertexMetrics{AccumulatedBackpressuredMS: 30000, AccumulatedBusyMS: 24000}},
+					{ID: "process-pre", Name: "process-pre", Status: "RUNNING", Backpressure: ok,
+						Metrics: VertexMetrics{AccumulatedBackpressuredMS: 0, AccumulatedBusyMS: 29000, AccumulatedIdleMS: 71000}},
+					{ID: "asyn", Name: "asyn-process", Status: "RUNNING", Backpressure: ok,
+						Metrics: VertexMetrics{AccumulatedBackpressuredMS: 0, AccumulatedBusyMS: 4000, AccumulatedIdleMS: 96000}},
+				},
+			},
+		}},
+	}
+
+	report := Diagnose(snapshot)
+	finding := findFinding(report.Findings, "backpressure_chain")
+	if finding.RuleID == "" {
+		t.Fatalf("missing backpressure_chain finding: %+v", report.Findings)
+	}
+	if got, want := finding.Evidence["bottleneck_vertex_name"], "process-pre"; got != want {
+		t.Fatalf("bottleneck vertex = %v, want %v", got, want)
+	}
+	if got, want := finding.Evidence["bottleneck_vertex_id"], "process-pre"; got != want {
+		t.Fatalf("bottleneck vertex id = %v, want %v", got, want)
+	}
+}
+
+// A chain with no backpressure at all must not emit a chain finding.
+func TestDiagnoseNoBackpressureChainWhenHealthy(t *testing.T) {
+	ok := &BackpressureInfo{BackpressureLevel: "ok"}
+	snapshot := Snapshot{
+		Jobs: []JobSnapshot{{
+			Overview: JobOverview{JID: "job-1", Name: "healthy", State: "RUNNING"},
+			Detail: JobDetail{
+				Vertices: []Vertex{
+					{ID: "a", Name: "source", Status: "RUNNING", Backpressure: ok},
+					{ID: "b", Name: "sink", Status: "RUNNING", Backpressure: ok},
+				},
+			},
+		}},
+	}
+	report := Diagnose(snapshot)
+	if hasFinding(report.Findings, "backpressure_chain") {
+		t.Fatalf("should not emit backpressure_chain when healthy: %+v", report.Findings)
+	}
+}
+
 func hasFinding(findings []Finding, ruleID string) bool {
 	return findFinding(findings, ruleID).RuleID != ""
 }

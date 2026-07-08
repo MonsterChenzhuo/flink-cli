@@ -10,11 +10,12 @@ func SummarizeFlameGraph(graph FlameGraph, topN int) FlameGraphSummary {
 	}
 	total := graph.Data.Value
 	summary := FlameGraphSummary{
+		Kind:         "flamegraph",
 		TotalSamples: total,
 		EndTimestamp: graph.EndTimestamp,
 	}
 	if total <= 0 {
-		summary.Interpretation = "火焰图没有返回有效采样；可能采样仍在进行、vertex 当前无运行 subtask，或 Web UI 火焰图端点不可用。"
+		summary.Interpretation = "total_samples=0 通常是正常现象：Flink 火焰图端点是惰性触发的，第一次请求只会触发一次采样并立即返回空结果，需要等约 2-5 秒后用完全相同的命令再跑一次才会有数据。请重试；如果多次重试后仍为 0，才考虑 vertex 当前无运行 subtask 或火焰图未启用（rest.flamegraph.enabled）。"
 		return summary
 	}
 	var frames []FlameGraphFrame

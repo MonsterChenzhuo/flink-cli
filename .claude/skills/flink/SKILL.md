@@ -38,6 +38,7 @@ Use `flink-cli` to query the Flink Web UI REST API and emit compact JSON for ana
    - `root_exception`, `job_failed`, `vertex_failed`: read `evidence.root_exception`, failed vertex evidence, then fetch JobManager/TaskManager logs or YARN diagnostics.
    - `checkpoint_failure_rate`, `checkpoint_slow`: check checkpoint storage, state backend, sink commit latency, alignment duration, and backpressure.
    - `backpressure_high`: follow the affected vertex downstream; inspect sink/external system latency, network buffers, and checkpoint alignment.
+   - `backpressure_chain`: the CLI already walked the vertex chain and found where backpressure terminates. Read `evidence.bottleneck_vertex_id` / `bottleneck_vertex_name` — that terminus is the real bottleneck, not the upstream source. Read `evidence.upstream_chain` for the propagation path and `evidence.interpretation.next_focus`, then run `flink-cli flamegraph --job-id <jobId> --vertex-id <bottleneck> --type ON_CPU <url>`. Do not re-query every vertex's backpressure by hand.
    - `sink_busy_upstream_backpressure`: the sink may report `backpressure=ok` while upstream vertices are backpressured. Treat this as a sink/external-system throughput bottleneck. For Doris, first read `evidence.interpretation`, then `evidence.doris_sink_metrics.summary` for sampled `per_flush_*`, `load_time_*`, `write_data_time_*`, `write_data_share_of_load`, and per-subtask throughput; also read `evidence.checkpoint_summary` to rule in/out checkpoint duration, failures, state size, and alignment buffered before blaming checkpoint.
    - `task_state_abnormal`: map failed tasks to their vertex and TaskManager logs.
    - `no_obvious_issue`: REST data does not show obvious job-level failure; continue with business throughput/latency, TaskManager logs, and external system metrics.
@@ -77,7 +78,7 @@ Use `flink-cli` to query the Flink Web UI REST API and emit compact JSON for ana
    flink-cli flamegraph --job-id <jobId> --vertex-id <vertexId> --type OFF_CPU --subtask-index <n> <flink-web-ui-url>
    ```
 
-   If the URL is a job overview page, `flink-cli flamegraph` first lists vertices and tells you which `--vertex-id` to use. If the URL is a full flame graph page such as `#/job/running/<jobId>/vertices/<vertexId>/flamegraph`, the CLI infers both ids. Read `summary.top_self_frames` first: it aggregates self-time by method name, so `top_self_frames[0]` is the real hotspot (CPU or blocking). Do NOT rank by `summary.top_frames` — those are cumulative values, so the outermost stack frames (`Thread.run`, `Task.doRun`, …) show `share`≈1 but carry no localization value. Also read `summary.top_leaf_paths` and `summary.interpretation`. Do not add `--include-raw` unless the raw flame graph tree is needed.
+   If the URL is a job overview page, `flink-cli flamegraph` first lists vertices and tells you which `--vertex-id` to use. If the URL is a full flame graph page such as `#/job/running/<jobId>/vertices/<vertexId>/flamegraph`, the CLI infers both ids. Read `summary.top_self_frames` first: it aggregates self-time by method name, so `top_self_frames[0]` is the real hotspot (CPU or blocking). Do NOT rank by `summary.top_frames` — those are cumulative values, so the outermost stack frames (`Thread.run`, `Task.doRun`, …) show `share`≈1 but carry no localization value. Also read `summary.top_leaf_paths` and `summary.interpretation`. Do not add `--include-raw` unless the raw flame graph tree is needed. Flink flame-graph sampling is lazy (the first request returns `total_samples=0` and only triggers a round); the CLI now auto-waits and retries (`--wait`, default 8s), so a single invocation usually returns populated data — if you still see `total_samples=0`, `interpretation`/`next_actions` say to just retry, it is not an error.
 
 ## Input handling
 
@@ -88,21 +89,27 @@ If the URL is a full vertex flame graph page such as `#/job/running/<jobId>/vert
 
 ## Errors
 
-Errors go to stderr as:
+Errors go to stderr as structured JSON with `schema_version` and optional `details`:
 
 ```json
-{"error":{"code":"...","message":"...","hint":"..."}}
+{"error":{"schema_version":"v1","code":"...","message":"...","hint":"...","details":{}}}
 ```
 
-Exit codes:
+Branch on `error.code` (do not grep the message):
 
-- `0`: command succeeded; inspect findings for job health.
-- `1`: internal/output error.
-- `2`: user input error.
-- `3`: Flink REST API unreachable or `/jobs/overview` failed.
+- `URL_INVALID` (exit 2): malformed URL.
+- `JOB_NOT_FOUND` (exit 2): `details.available_job_ids` lists valid ids — pick one, don't re-run to discover them.
+- `TLS_CERT_ERROR` (exit 3): retry with `--insecure-skip-verify` (see `details.retriable_flags`).
+- `NON_JSON_HTML_RESPONSE` (exit 3): got HTML, not JSON — `details.likely_cause=yarn_proxy_expired_or_login_page`. Ask the user for the current application's Web UI URL; do not keep diagnosing. This also fires on non-200 responses whose body is HTML.
+- `NON_JSON_RESPONSE` (exit 3): body was not valid JSON.
+- `HTTP_STATUS_ERROR` (exit 3): non-2xx with a non-HTML body; `details.http_status` has the code.
+- `FLINK_API_TIMEOUT` (exit 3): request timed out; raise `--timeout`.
+- `FLINK_API_UNREACHABLE` (exit 3): other connection failure.
+- `OUTPUT_ERROR` / `FLAG_INVALID` / `INTERNAL` (exit 1).
+
+Exit codes: `0` success; `1` internal/output/flag; `2` user input; `3` REST API layer. Always parse `error.code` and `error.details`, not just the exit code.
 
 For internal HTTPS YARN gateways with self-signed or non-standard certificates, use `--insecure-skip-verify`.
-If the error says `returned non-JSON response` or `got HTML`, the URL did not return Flink REST JSON. Check whether the YARN application/proxy URL expired, points to a login/error page, or lost the gateway proxy path.
 
 ## Do Not
 

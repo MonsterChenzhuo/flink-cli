@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestNormalizeBaseURLPreservesGatewayPath(t *testing.T) {
@@ -197,6 +198,70 @@ func TestClientReturnsHelpfulErrorForHTMLResponse(t *testing.T) {
 	if nonJSON.Prefix == "" {
 		t.Fatalf("expected response prefix in error")
 	}
+	if !nonJSON.IsHTML {
+		t.Fatalf("expected IsHTML=true for HTML body")
+	}
+}
+
+// YARN proxy expiry / login redirect often returns a non-2xx status WITH an
+// HTML body. That must be detected as an HTML/proxy-expired error, not an
+// opaque HTTP_STATUS_ERROR that is indistinguishable from a real Flink 5xx.
+func TestClientDetectsHTMLOnNon2xx(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/jobs/overview", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		w.WriteHeader(http.StatusFound)
+		_, _ = w.Write([]byte(`<!DOCTYPE html><html><body>login required</body></html>`))
+	})
+	server := httptest.NewServer(mux)
+	defer server.Close()
+
+	client, err := NewClient(server.URL)
+	if err != nil {
+		t.Fatalf("NewClient returned error: %v", err)
+	}
+	_, err = client.Collect(context.Background())
+	if err == nil {
+		t.Fatalf("expected error for non-2xx HTML response")
+	}
+	var nonJSON *NonJSONResponseError
+	if !errors.As(err, &nonJSON) {
+		t.Fatalf("error = %T %[1]v, want *NonJSONResponseError (not HTTPError)", err)
+	}
+	if !nonJSON.IsHTML {
+		t.Fatalf("expected IsHTML=true for non-2xx HTML body")
+	}
+	class := ClassifyAPIError(err)
+	if class.Code != "NON_JSON_HTML_RESPONSE" {
+		t.Fatalf("classified code = %q, want NON_JSON_HTML_RESPONSE", class.Code)
+	}
+}
+
+// A genuine non-2xx WITHOUT HTML body must still classify as HTTP_STATUS_ERROR.
+func TestClientNon2xxWithoutHTMLStaysHTTPError(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/jobs/overview", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = w.Write([]byte(`{"errors":["boom"]}`))
+	})
+	server := httptest.NewServer(mux)
+	defer server.Close()
+
+	client, err := NewClient(server.URL)
+	if err != nil {
+		t.Fatalf("NewClient returned error: %v", err)
+	}
+	_, err = client.Collect(context.Background())
+	if err == nil {
+		t.Fatalf("expected error for HTTP 500")
+	}
+	var httpErr *HTTPError
+	if !errors.As(err, &httpErr) {
+		t.Fatalf("error = %T %[1]v, want *HTTPError", err)
+	}
+	if httpErr.StatusCode != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 500", httpErr.StatusCode)
+	}
 }
 
 func TestClientListJobsOnlyFetchesOverview(t *testing.T) {
@@ -272,6 +337,31 @@ func TestSummarizeThreadDumpExplainsNoInterestingThreads(t *testing.T) {
 	}
 }
 
+// A thread whose stack merely mentions the word "blocked" (e.g. in a method or
+// log line) but is RUNNABLE must NOT be classified as blocked. Only real
+// BLOCKED-state threads should be.
+func TestSummarizeThreadDumpBlockedUsesThreadState(t *testing.T) {
+	dump := ThreadDump{ThreadInfos: []ThreadInfo{
+		{
+			ThreadName:            "worker-runnable",
+			StringifiedThreadInfo: "\"worker-runnable\" Id=10 RUNNABLE\n\tat com.example.QueueBlockedChecker.poll(QueueBlockedChecker.java:20)\n\n",
+		},
+		{
+			ThreadName:            "worker-really-blocked",
+			StringifiedThreadInfo: "\"worker-really-blocked\" Id=11 BLOCKED on java.lang.Object@abc\n\tat com.example.Lock.acquire(Lock.java:5)\n\n",
+		},
+	}}
+	summary := SummarizeThreadDump(dump, 10)
+	if summary.Reasons["blocked"] != 1 {
+		t.Fatalf("blocked reason count = %d, want 1 (only the real BLOCKED thread)", summary.Reasons["blocked"])
+	}
+	for _, it := range summary.InterestingThreads {
+		if it.ThreadName == "worker-runnable" {
+			t.Fatalf("RUNNABLE thread with 'blocked' in stack must not be flagged blocked")
+		}
+	}
+}
+
 func TestSummarizeDorisSinkMetricsRoundsAndDerivesReadableFields(t *testing.T) {
 	summary := summarizeDorisSinkMetrics([]DorisSinkMetricsSample{
 		{
@@ -338,6 +428,68 @@ func TestClientGetsFlameGraphWithTypeAndSubtask(t *testing.T) {
 	}
 	if got, want := summary.TopFrames[0].Share, 0.7; got != want {
 		t.Fatalf("top frame share = %v, want %v", got, want)
+	}
+}
+
+// Flink flamegraph sampling is lazy: the first request returns total=0 and
+// only triggers a sampling round. GetFlameGraphWaiting must poll until samples
+// appear so the AI gets data from one invocation.
+func TestGetFlameGraphWaitingPollsUntilSamplesAppear(t *testing.T) {
+	var calls int
+	mux := http.NewServeMux()
+	mux.HandleFunc("/jobs/job-1/vertices/v1/flamegraph", func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		if calls < 3 {
+			// First two calls: sampling still in progress, empty tree.
+			_, _ = w.Write([]byte(`{"endTimestamp":-3,"data":{"name":"root","value":0}}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"endTimestamp":100,"data":{"name":"root","value":10,"children":[{"name":"hot.Frame","value":10}]}}`))
+	})
+	server := httptest.NewServer(mux)
+	defer server.Close()
+
+	client, err := NewClient(server.URL)
+	if err != nil {
+		t.Fatalf("NewClient returned error: %v", err)
+	}
+	graph, err := client.GetFlameGraphWaiting(context.Background(), FlameGraphRequest{JobID: "job-1", VertexID: "v1"}, 2*time.Second, 10*time.Millisecond)
+	if err != nil {
+		t.Fatalf("GetFlameGraphWaiting error: %v", err)
+	}
+	if graph.Data.Value != 10 {
+		t.Fatalf("expected non-empty samples after polling, got value=%d (calls=%d)", graph.Data.Value, calls)
+	}
+	if calls < 3 {
+		t.Fatalf("expected at least 3 calls (2 empty + 1 populated), got %d", calls)
+	}
+}
+
+// With waiting disabled (maxWait=0), it must do exactly one request and return
+// whatever it got, even if empty.
+func TestGetFlameGraphWaitingDisabledDoesSingleCall(t *testing.T) {
+	var calls int
+	mux := http.NewServeMux()
+	mux.HandleFunc("/jobs/job-1/vertices/v1/flamegraph", func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		_, _ = w.Write([]byte(`{"endTimestamp":-3,"data":{"name":"root","value":0}}`))
+	})
+	server := httptest.NewServer(mux)
+	defer server.Close()
+
+	client, err := NewClient(server.URL)
+	if err != nil {
+		t.Fatalf("NewClient returned error: %v", err)
+	}
+	graph, err := client.GetFlameGraphWaiting(context.Background(), FlameGraphRequest{JobID: "job-1", VertexID: "v1"}, 0, 0)
+	if err != nil {
+		t.Fatalf("GetFlameGraphWaiting error: %v", err)
+	}
+	if graph.Data.Value != 0 {
+		t.Fatalf("expected empty graph, got value=%d", graph.Data.Value)
+	}
+	if calls != 1 {
+		t.Fatalf("expected exactly 1 call with waiting disabled, got %d", calls)
 	}
 }
 

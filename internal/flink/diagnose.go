@@ -12,6 +12,10 @@ type Report struct {
 }
 
 type Summary struct {
+	// Kind is a discriminator so AI consumers can tell which summary shape they
+	// are looking at: the top-level `summary` field is a different type per
+	// command (diagnose / thread_dump / flamegraph).
+	Kind        string         `json:"kind"`
 	Critical    int            `json:"critical"`
 	Warn        int            `json:"warn"`
 	OK          int            `json:"ok"`
@@ -30,6 +34,7 @@ type Finding struct {
 func Diagnose(snapshot Snapshot) Report {
 	report := Report{
 		Summary: Summary{
+			Kind:        "diagnose",
 			TotalJobs:   len(snapshot.Jobs),
 			JobsByState: map[string]int{},
 		},
@@ -144,8 +149,91 @@ func diagnoseJob(job JobSnapshot) []Finding {
 			})
 		}
 	}
+	findings = append(findings, diagnoseBackpressureChain(jobID, jobName, job.Detail.Vertices)...)
 	findings = append(findings, diagnoseBusySinkBackpressure(jobID, jobName, job.Checkpoints, job.Detail.Vertices)...)
 	return findings
+}
+
+// diagnoseBackpressureChain walks vertices in topological order. When upstream
+// vertices are backpressured (high/low) and the chain terminates at a vertex
+// that is itself busy but NOT high-backpressured (its downstream is not pushing
+// back), that terminus is the real bottleneck. This saves the AI from manually
+// querying every vertex's backpressure to find where the chain ends — exactly
+// the manual work done during the finderX_data_base_pre investigation.
+func diagnoseBackpressureChain(jobID, jobName string, vertices []Vertex) []Finding {
+	if len(vertices) < 2 {
+		return nil
+	}
+	// Find the deepest vertex that is still backpressured (high or low).
+	lastBackpressuredIdx := -1
+	for i, v := range vertices {
+		if v.Backpressure == nil {
+			continue
+		}
+		switch strings.ToLower(v.Backpressure.Level()) {
+		case "high", "low":
+			lastBackpressuredIdx = i
+		}
+	}
+	if lastBackpressuredIdx < 0 {
+		return nil
+	}
+	// The bottleneck is the first vertex AFTER the last backpressured one that
+	// is not itself backpressured — that's where the chain terminates. If the
+	// last backpressured vertex is the final vertex, it is its own terminus.
+	bottleneckIdx := lastBackpressuredIdx + 1
+	if bottleneckIdx >= len(vertices) {
+		bottleneckIdx = lastBackpressuredIdx
+	}
+	// Require that at least one upstream vertex is actually high (a lone "low"
+	// is not worth a dedicated chain finding — backpressure_high covers it).
+	hasHigh := false
+	chain := make([]map[string]any, 0, bottleneckIdx+1)
+	for i := 0; i <= lastBackpressuredIdx; i++ {
+		v := vertices[i]
+		level := ""
+		if v.Backpressure != nil {
+			level = strings.ToLower(v.Backpressure.Level())
+		}
+		if level == "high" {
+			hasHigh = true
+		}
+		chain = append(chain, map[string]any{
+			"vertex_id":          v.ID,
+			"vertex_name":        v.Name,
+			"backpressure_level": level,
+		})
+	}
+	if !hasHigh {
+		return nil
+	}
+	bottleneck := vertices[bottleneckIdx]
+	bottleneckLevel := ""
+	if bottleneck.Backpressure != nil {
+		bottleneckLevel = strings.ToLower(bottleneck.Backpressure.Level())
+	}
+	evidence := map[string]any{
+		"job_id":                        jobID,
+		"job_name":                      jobName,
+		"bottleneck_vertex_id":          bottleneck.ID,
+		"bottleneck_vertex_name":        bottleneck.Name,
+		"bottleneck_backpressure_level": bottleneckLevel,
+		"upstream_chain":                chain,
+	}
+	if bottleneck.Backpressure != nil {
+		evidence["bottleneck_backpressure"] = summarizeBackpressure(*bottleneck.Backpressure)
+	}
+	evidence["interpretation"] = map[string]any{
+		"reasoning":  "反压从上游一路传导，到该 vertex 终止（它自身不再被下游反压）。反压链终止点通常就是真正的瓶颈算子。",
+		"next_focus": "优先分析 bottleneck_vertex 的算子逻辑、CPU（用 flamegraph --type ON_CPU 看 self-time 热点）、序列化开销、外部系统写入或数据倾斜，而不是只看最上游的 source。",
+	}
+	return []Finding{{
+		RuleID:     "backpressure_chain",
+		Severity:   "warn",
+		Title:      "反压链路分析：定位到瓶颈终止 vertex",
+		Evidence:   evidence,
+		Suggestion: "反压链终止在 bottleneck_vertex；对它执行 flink-cli flamegraph --job-id <jobId> --vertex-id " + bottleneck.ID + " --type ON_CPU <url> 看 CPU 热点，并检查该算子序列化、外部写入和数据分布。",
+	}}
 }
 
 func diagnoseBusySinkBackpressure(jobID, jobName string, checkpoints CheckpointStats, vertices []Vertex) []Finding {
@@ -410,6 +498,8 @@ func rulePriority(ruleID string) int {
 		return 30
 	case "sink_busy_upstream_backpressure":
 		return 25
+	case "backpressure_chain":
+		return 22
 	case "backpressure_high":
 		return 20
 	case "checkpoint_failure_rate", "checkpoint_slow":

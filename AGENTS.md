@@ -57,6 +57,14 @@ flink-cli flamegraph --job-id <jobId> --vertex-id <vertexId> --type OFF_CPU --su
 
 不要因为 `flink-cli diagnose` 退出码是 `0` 就认为作业健康；作业健康状态看 `summary` 和 `findings`。
 
+几个 AI 友好约定：
+
+- 顶层 `summary` 带 `kind`（`diagnose`/`thread_dump`/`flamegraph`），据此确认 summary 形状。
+- 反压排查看 `backpressure_chain` finding：CLI 已沿链路定位瓶颈终止 vertex，直接读 `evidence.bottleneck_vertex_name`，不要逐个 vertex 手工查 backpressure。
+- 火焰图惰性采样，CLI 已内置 `--wait` 自动重试；`total_samples=0` 是正常首次结果，按 `interpretation` 重试即可，不是错误。
+- 计数字段（`tasks`、checkpoint counts）保留 `failed:0`，是"0 失败"健康信号，不是缺失。
+- stderr error 带结构化 `code` 和 `details`：`JOB_NOT_FOUND` 给 `details.available_job_ids`，`TLS_CERT_ERROR` 给 `details.retriable_flags`，`NON_JSON_HTML_RESPONSE` 表示 YARN proxy 过期/登录页。据 `error.code` 分支，不要 grep message。
+
 ## 开发检查
 
 改代码后至少运行：

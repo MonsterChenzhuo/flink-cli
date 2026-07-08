@@ -117,6 +117,41 @@ func (c *Client) GetFlameGraph(ctx context.Context, req FlameGraphRequest) (Flam
 	return graph, nil
 }
 
+// GetFlameGraphWaiting handles Flink's lazy flame-graph sampling for AI
+// callers: the first request only *triggers* a sampling round and returns
+// total_samples=0, so a naive single call almost always yields empty data.
+// This polls the endpoint until samples appear or maxWait elapses, so the AI
+// gets a populated flame graph from a single CLI invocation. pollInterval<=0
+// or maxWait<=0 falls back to a single request (no waiting).
+func (c *Client) GetFlameGraphWaiting(ctx context.Context, req FlameGraphRequest, maxWait, pollInterval time.Duration) (FlameGraph, error) {
+	graph, err := c.GetFlameGraph(ctx, req)
+	if err != nil {
+		return FlameGraph{}, err
+	}
+	if graph.Data.Value > 0 || maxWait <= 0 || pollInterval <= 0 {
+		return graph, nil
+	}
+	deadline := time.Now().Add(maxWait)
+	for time.Now().Before(deadline) {
+		timer := time.NewTimer(pollInterval)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return graph, ctx.Err()
+		case <-timer.C:
+		}
+		next, err := c.GetFlameGraph(ctx, req)
+		if err != nil {
+			return FlameGraph{}, err
+		}
+		if next.Data.Value > 0 {
+			return next, nil
+		}
+		graph = next
+	}
+	return graph, nil
+}
+
 func (c *Client) CollectWithOptions(ctx context.Context, opts CollectOptions) (Snapshot, error) {
 	var overview struct {
 		Jobs []JobOverview `json:"jobs"`
@@ -249,6 +284,7 @@ type NonJSONResponseError struct {
 	Path    string
 	Prefix  string
 	Message string
+	IsHTML  bool
 }
 
 func (e *NonJSONResponseError) Error() string {
@@ -256,6 +292,76 @@ func (e *NonJSONResponseError) Error() string {
 		return fmt.Sprintf("GET %s returned non-JSON response: %s", e.Path, e.Message)
 	}
 	return fmt.Sprintf("GET %s returned non-JSON response: %s; prefix=%q", e.Path, e.Message, e.Prefix)
+}
+
+// APIErrorClass is a stable, machine-readable classification of a REST call
+// failure so AI consumers can branch on a code instead of grep-ing the message.
+type APIErrorClass struct {
+	Code    string
+	Details map[string]any
+}
+
+// ClassifyAPIError maps a low-level error returned by the REST client to a
+// stable code + structured details. Callers turn this into an apperr.Error.
+func ClassifyAPIError(err error) APIErrorClass {
+	if err == nil {
+		return APIErrorClass{Code: "FLINK_API_UNREACHABLE"}
+	}
+	var nonJSON *NonJSONResponseError
+	if errors.As(err, &nonJSON) {
+		if nonJSON.IsHTML {
+			return APIErrorClass{
+				Code: "NON_JSON_HTML_RESPONSE",
+				Details: map[string]any{
+					"reason":       "got_html_expected_json",
+					"body_prefix":  nonJSON.Prefix,
+					"likely_cause": "yarn_proxy_expired_or_login_page",
+				},
+			}
+		}
+		return APIErrorClass{
+			Code: "NON_JSON_RESPONSE",
+			Details: map[string]any{
+				"reason":      "invalid_json",
+				"body_prefix": nonJSON.Prefix,
+			},
+		}
+	}
+	var httpErr *HTTPError
+	if errors.As(err, &httpErr) {
+		return APIErrorClass{
+			Code:    "HTTP_STATUS_ERROR",
+			Details: map[string]any{"http_status": httpErr.StatusCode},
+		}
+	}
+	msg := err.Error()
+	if isTLSCertError(msg) {
+		return APIErrorClass{
+			Code: "TLS_CERT_ERROR",
+			Details: map[string]any{
+				"retriable_flags": []string{"--insecure-skip-verify"},
+			},
+		}
+	}
+	if isTimeoutError(err) {
+		return APIErrorClass{Code: "FLINK_API_TIMEOUT"}
+	}
+	return APIErrorClass{Code: "FLINK_API_UNREACHABLE"}
+}
+
+func isTLSCertError(msg string) bool {
+	lower := strings.ToLower(msg)
+	return strings.Contains(lower, "x509") ||
+		strings.Contains(lower, "certificate") ||
+		strings.Contains(lower, "tls")
+}
+
+func isTimeoutError(err error) bool {
+	if errors.Is(err, context.DeadlineExceeded) {
+		return true
+	}
+	lower := strings.ToLower(err.Error())
+	return strings.Contains(lower, "timeout") || strings.Contains(lower, "deadline exceeded")
 }
 
 func (c *Client) getJSON(ctx context.Context, apiPath string, out any) error {
@@ -278,12 +384,19 @@ func (c *Client) getJSONWithQuery(ctx context.Context, apiPath string, query url
 		return err
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return &HTTPError{Path: apiPath, StatusCode: resp.StatusCode}
-	}
 	body, err := io.ReadAll(io.LimitReader(resp.Body, 16<<20))
 	if err != nil {
 		return fmt.Errorf("read %s: %w", apiPath, err)
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		// YARN proxy expiry / login redirect frequently returns a non-2xx
+		// status with an HTML body. Detect that here so the AI gets the
+		// "proxy expired" signal instead of an opaque "HTTP 500" that is
+		// indistinguishable from a genuine Flink server error.
+		if looksLikeHTML(body) {
+			return nonJSONError(apiPath, body, fmt.Errorf("HTTP %d", resp.StatusCode))
+		}
+		return &HTTPError{Path: apiPath, StatusCode: resp.StatusCode}
 	}
 	if err := json.Unmarshal(body, out); err != nil {
 		return nonJSONError(apiPath, body, err)
@@ -521,8 +634,20 @@ func nonJSONError(apiPath string, body []byte, err error) error {
 		prefix = prefix[:120] + "...(truncated)"
 	}
 	msg := err.Error()
-	if strings.HasPrefix(prefix, "<") {
+	isHTML := looksLikeHTML(body)
+	if isHTML {
 		msg = "expected Flink REST JSON but got HTML; the YARN proxy application may be expired, redirected, or serving a login/error page"
 	}
-	return &NonJSONResponseError{Path: apiPath, Prefix: prefix, Message: msg}
+	return &NonJSONResponseError{Path: apiPath, Prefix: prefix, Message: msg, IsHTML: isHTML}
+}
+
+func looksLikeHTML(body []byte) bool {
+	trimmed := strings.TrimSpace(string(body))
+	if trimmed == "" {
+		return false
+	}
+	lower := strings.ToLower(trimmed)
+	return strings.HasPrefix(lower, "<!doctype html") ||
+		strings.HasPrefix(lower, "<html") ||
+		strings.HasPrefix(trimmed, "<")
 }

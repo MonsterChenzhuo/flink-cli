@@ -12,6 +12,7 @@ func SummarizeThreadDump(dump ThreadDump, maxInteresting int) ThreadDumpSummary 
 		maxInteresting = 20
 	}
 	summary := ThreadDumpSummary{
+		Kind:         "thread_dump",
 		TotalThreads: len(dump.ThreadInfos),
 		States:       map[string]int{},
 		Reasons:      map[string]int{},
@@ -22,7 +23,7 @@ func SummarizeThreadDump(dump ThreadDump, maxInteresting int) ThreadDumpSummary 
 			state = "UNKNOWN"
 		}
 		summary.States[state]++
-		reason := interestingThreadReason(thread)
+		reason := interestingThreadReason(thread, state)
 		if reason == "" {
 			continue
 		}
@@ -69,7 +70,7 @@ func threadState(s string) string {
 	return match[1]
 }
 
-func interestingThreadReason(thread ThreadInfo) string {
+func interestingThreadReason(thread ThreadInfo, state string) string {
 	lower := strings.ToLower(thread.ThreadName + "\n" + thread.StringifiedThreadInfo)
 	switch {
 	case strings.Contains(lower, "recordbuffer.read") && strings.Contains(lower, "org.apache.doris"):
@@ -90,7 +91,10 @@ func interestingThreadReason(thread ThreadInfo) string {
 		return "socket_write"
 	case strings.Contains(lower, "http") && strings.Contains(lower, "write"):
 		return "http_write"
-	case strings.Contains(lower, "blocked"):
+	// Use the parsed JVM thread state, not a substring match: the word
+	// "blocked" can appear anywhere in a stack (method names, log lines) and
+	// would otherwise flag threads that are not actually BLOCKED.
+	case state == "BLOCKED":
 		return "blocked"
 	default:
 		return ""

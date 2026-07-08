@@ -1,6 +1,9 @@
 package flink
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 // A linear call chain where the outermost frames have cumulative value == total
 // but zero self-time. Only the deepest frame actually burns CPU. The self-time
@@ -61,6 +64,22 @@ func TestSummarizeFlameGraphSelfTimeSurfacesRealHotspot(t *testing.T) {
 		if f.Name == "Thread.run" || f.Name == "Task.doRun" {
 			t.Fatalf("wrapper frame %q leaked into self-time view", f.Name)
 		}
+	}
+}
+
+// When sampling has not produced data yet (total=0), the interpretation must
+// explicitly tell the AI this is normal and to retry — not treat it as an error.
+func TestSummarizeFlameGraphEmptyTellsAIToRetry(t *testing.T) {
+	graph := FlameGraph{Data: FlameGraphNode{Name: "root", Value: 0}}
+	summary := SummarizeFlameGraph(graph, 10)
+	if summary.TotalSamples != 0 {
+		t.Fatalf("total_samples = %d, want 0", summary.TotalSamples)
+	}
+	if !strings.Contains(summary.Interpretation, "重试") && !strings.Contains(summary.Interpretation, "再跑一次") {
+		t.Fatalf("empty-sample interpretation must mention retry, got: %s", summary.Interpretation)
+	}
+	if len(summary.TopSelfFrames) != 0 || len(summary.TopFrames) != 0 {
+		t.Fatalf("empty graph must not produce frames")
 	}
 }
 

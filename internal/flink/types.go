@@ -1,5 +1,7 @@
 package flink
 
+import "encoding/json"
+
 type Snapshot struct {
 	UIURL            string            `json:"ui_url"`
 	FlinkVersion     string            `json:"flink_version,omitempty"`
@@ -74,6 +76,7 @@ type FlameGraphNode struct {
 }
 
 type FlameGraphSummary struct {
+	Kind           string            `json:"kind"`
 	TotalSamples   int64             `json:"total_samples"`
 	EndTimestamp   int64             `json:"end_timestamp,omitempty"`
 	TopSelfFrames  []FlameGraphFrame `json:"top_self_frames,omitempty"`
@@ -149,17 +152,20 @@ type DorisSinkMetricsSample struct {
 	PutDataTimeMsMean          float64 `json:"put_data_time_ms_mean,omitempty"`
 }
 
+// Counts are emitted without omitempty: a 0 is a meaningful health signal
+// (e.g. failed:0) and AI consumers must be able to distinguish "0 tasks" from
+// "field absent / not collected".
 type TaskCounts struct {
-	Total       int `json:"total,omitempty"`
-	Created     int `json:"created,omitempty"`
-	Scheduled   int `json:"scheduled,omitempty"`
-	Deploying   int `json:"deploying,omitempty"`
-	Running     int `json:"running,omitempty"`
-	Finished    int `json:"finished,omitempty"`
-	Canceling   int `json:"canceling,omitempty"`
-	Canceled    int `json:"canceled,omitempty"`
-	Failed      int `json:"failed,omitempty"`
-	Reconciling int `json:"reconciling,omitempty"`
+	Total       int `json:"total"`
+	Created     int `json:"created"`
+	Scheduled   int `json:"scheduled"`
+	Deploying   int `json:"deploying"`
+	Running     int `json:"running"`
+	Finished    int `json:"finished"`
+	Canceling   int `json:"canceling"`
+	Canceled    int `json:"canceled"`
+	Failed      int `json:"failed"`
+	Reconciling int `json:"reconciling"`
 }
 
 type ExceptionReport struct {
@@ -181,12 +187,14 @@ type CheckpointStats struct {
 	Latest  LatestCheckpoints      `json:"latest,omitempty"`
 }
 
+// Counts are emitted without omitempty so failed:0 / completed:0 stay visible
+// as health signals rather than silently disappearing.
 type CheckpointCounts struct {
-	Restored   int `json:"restored,omitempty"`
-	Total      int `json:"total,omitempty"`
-	InProgress int `json:"in_progress,omitempty"`
-	Completed  int `json:"completed,omitempty"`
-	Failed     int `json:"failed,omitempty"`
+	Restored   int `json:"restored"`
+	Total      int `json:"total"`
+	InProgress int `json:"in_progress"`
+	Completed  int `json:"completed"`
+	Failed     int `json:"failed"`
 }
 
 type LatestCheckpoints struct {
@@ -242,6 +250,9 @@ type TaskManagersResponse struct {
 	TaskManagers []TaskManagerOverview `json:"taskmanagers"`
 }
 
+// TaskManagerOverview parses Flink's camelCase fields but re-tags them to
+// snake_case for our own output via MarshalJSON, so AI consumers see a
+// consistent naming style. The struct tags below are the *input* (Flink) names.
 type TaskManagerOverview struct {
 	ID        string `json:"id"`
 	Path      string `json:"path,omitempty"`
@@ -251,16 +262,37 @@ type TaskManagerOverview struct {
 	FreeSlots int    `json:"freeSlots,omitempty"`
 }
 
+func (t TaskManagerOverview) MarshalJSON() ([]byte, error) {
+	return json.Marshal(struct {
+		ID        string `json:"id"`
+		Path      string `json:"path,omitempty"`
+		DataPort  int    `json:"data_port,omitempty"`
+		JMXPort   int    `json:"jmx_port,omitempty"`
+		Slots     int    `json:"slots_number,omitempty"`
+		FreeSlots int    `json:"free_slots,omitempty"`
+	}{t.ID, t.Path, t.DataPort, t.JMXPort, t.Slots, t.FreeSlots})
+}
+
 type ThreadDump struct {
 	ThreadInfos []ThreadInfo `json:"threadInfos"`
 }
 
+// ThreadInfo parses Flink's camelCase fields (threadName /
+// stringifiedThreadInfo) but re-emits snake_case for our output.
 type ThreadInfo struct {
 	ThreadName            string `json:"threadName"`
 	StringifiedThreadInfo string `json:"stringifiedThreadInfo"`
 }
 
+func (t ThreadInfo) MarshalJSON() ([]byte, error) {
+	return json.Marshal(struct {
+		ThreadName            string `json:"thread_name"`
+		StringifiedThreadInfo string `json:"stringified_thread_info"`
+	}{t.ThreadName, t.StringifiedThreadInfo})
+}
+
 type ThreadDumpSummary struct {
+	Kind               string          `json:"kind"`
 	TotalThreads       int             `json:"total_threads"`
 	States             map[string]int  `json:"states"`
 	Reasons            map[string]int  `json:"reasons,omitempty"`
@@ -276,6 +308,10 @@ type ThreadSummary struct {
 	TopFrames  []string `json:"top_frames,omitempty"`
 }
 
+// BackpressureInfo keeps both the kebab-case and camelCase level fields so it
+// can unmarshal either Flink version's response, but MarshalJSON below emits a
+// single normalized snake_case `backpressure_level` so AI consumers never see
+// two keys for the same concept.
 type BackpressureInfo struct {
 	Status             string                `json:"status,omitempty"`
 	BackpressureLevel  string                `json:"backpressure-level,omitempty"`
@@ -290,6 +326,20 @@ func (b BackpressureInfo) Level() string {
 	return b.BackpressureLevel2
 }
 
+func (b BackpressureInfo) MarshalJSON() ([]byte, error) {
+	out := map[string]any{}
+	if b.Status != "" {
+		out["status"] = b.Status
+	}
+	if level := b.Level(); level != "" {
+		out["backpressure_level"] = level
+	}
+	if len(b.Subtasks) > 0 {
+		out["subtasks"] = b.Subtasks
+	}
+	return json.Marshal(out)
+}
+
 type SubtaskBackpressure struct {
 	Subtask            int     `json:"subtask,omitempty"`
 	BackpressureLevel  string  `json:"backpressure-level,omitempty"`
@@ -297,6 +347,19 @@ type SubtaskBackpressure struct {
 	Ratio              float64 `json:"ratio,omitempty"`
 	BusyRatio          float64 `json:"busyRatio,omitempty"`
 	IdleRatio          float64 `json:"idleRatio,omitempty"`
+}
+
+func (s SubtaskBackpressure) MarshalJSON() ([]byte, error) {
+	out := map[string]any{
+		"subtask":    s.Subtask,
+		"ratio":      s.Ratio,
+		"busy_ratio": s.BusyRatio,
+		"idle_ratio": s.IdleRatio,
+	}
+	if level := s.Level(); level != "" {
+		out["backpressure_level"] = level
+	}
+	return json.Marshal(out)
 }
 
 func (s SubtaskBackpressure) Level() string {

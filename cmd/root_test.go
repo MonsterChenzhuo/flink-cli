@@ -228,6 +228,19 @@ func TestDiagnoseCommandReturnsUserErrorWhenJobIDMissing(t *testing.T) {
 	if got, want := env["error"]["code"], "JOB_NOT_FOUND"; got != want {
 		t.Fatalf("error code = %v, want %v", got, want)
 	}
+	// The available job ids must be surfaced structurally so the AI can
+	// pick a valid one without re-running a command.
+	details, ok := env["error"]["details"].(map[string]any)
+	if !ok {
+		t.Fatalf("error.details missing: %s", stderr.String())
+	}
+	ids, ok := details["available_job_ids"].([]any)
+	if !ok || len(ids) != 1 || ids[0] != "job-1" {
+		t.Fatalf("available_job_ids = %v, want [job-1]", details["available_job_ids"])
+	}
+	if got, want := env["error"]["schema_version"], "v1"; got != want {
+		t.Fatalf("error.schema_version = %v, want v1", got)
+	}
 }
 
 func TestDiagnoseCommandListJobs(t *testing.T) {
@@ -247,7 +260,7 @@ func TestDiagnoseCommandListJobs(t *testing.T) {
 	if err := json.Unmarshal(stdout.Bytes(), &env); err != nil {
 		t.Fatalf("stdout is not JSON: %v\n%s", err, stdout.String())
 	}
-	if got, want := env["scenario"], "list-jobs"; got != want {
+	if got, want := env["scenario"], "diagnose-list-jobs"; got != want {
 		t.Fatalf("scenario = %v, want %v", got, want)
 	}
 	if _, ok := env["jobs"].([]any); !ok {

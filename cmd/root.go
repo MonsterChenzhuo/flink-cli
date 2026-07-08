@@ -58,6 +58,7 @@ type state struct {
 	subtaskIndex     int
 	topFrames        int
 	includeRaw       bool
+	flameGraphWait   time.Duration
 }
 
 type listJobsEnvelope struct {
@@ -171,6 +172,7 @@ func newFlameGraphCmd(st *state) *cobra.Command {
 	c.Flags().IntVar(&st.subtaskIndex, "subtask-index", -1, "specific subtask index to sample; -1 means aggregate vertex flame graph")
 	c.Flags().IntVar(&st.topFrames, "top-frames", 10, "maximum top frames and leaf paths to include")
 	c.Flags().BoolVar(&st.includeRaw, "include-raw", false, "include raw flame graph tree in stdout")
+	c.Flags().DurationVar(&st.flameGraphWait, "wait", 8*time.Second, "max time to wait for Flink lazy sampling to produce samples (0 disables waiting/retry)")
 	return c
 }
 
@@ -214,11 +216,13 @@ func runDiagnose(ctx context.Context, rawURL string, st state, stdout, stderr io
 	if err != nil {
 		var nf *flink.JobNotFoundError
 		if errors.As(err, &nf) {
-			apperr.WriteJSON(stderr, apperr.New("JOB_NOT_FOUND", err.Error(), "先运行 `flink-cli diagnose <url>` 查看 summary.jobs_by_state，或确认 --job-id 是否来自 /jobs/overview"))
+			apperr.WriteJSON(stderr, apperr.New("JOB_NOT_FOUND", err.Error(), "从 details.available_job_ids 里挑一个，或运行 `flink-cli diagnose --list-jobs <url>` 查看全部作业").WithDetails(map[string]any{
+				"requested_job_id":  nf.JobID,
+				"available_job_ids": nf.AvailableIDs,
+			}))
 			return 2
 		}
-		apperr.WriteJSON(stderr, apperr.New("FLINK_API_UNREACHABLE", err.Error(), "确认 URL 可访问，并且指向 Flink 1.18 Web UI 根路径；如果错误包含 x509 或 certificate，可重试加 --insecure-skip-verify；如果返回 HTML，检查 YARN application/proxy 是否过期或被登录页拦截"))
-		return 3
+		return writeFlinkAPIError(stderr, "确认 URL 可访问，并且指向 Flink 1.18 Web UI 根路径", err)
 	}
 	report := flink.Diagnose(snapshot)
 	env := envelope{
@@ -258,8 +262,7 @@ func runThreadDump(ctx context.Context, rawURL string, st state, stdout, stderr 
 	if st.listTaskManagers || st.taskManagerID == "" {
 		taskManagers, err := client.ListTaskManagers(ctx)
 		if err != nil {
-			apperr.WriteJSON(stderr, apperr.New("FLINK_API_UNREACHABLE", err.Error(), flinkAPIHint("确认 URL 可访问，并且 /taskmanagers 可读取")))
-			return 3
+			return writeFlinkAPIError(stderr, "确认 URL 可访问，并且 /taskmanagers 可读取", err)
 		}
 		base, _ := flink.NormalizeBaseURL(rawURL)
 		env := threadDumpEnvelope{
@@ -282,8 +285,7 @@ func runThreadDump(ctx context.Context, rawURL string, st state, stdout, stderr 
 	}
 	dump, err := client.GetThreadDump(ctx, st.taskManagerID)
 	if err != nil {
-		apperr.WriteJSON(stderr, apperr.New("FLINK_API_UNREACHABLE", err.Error(), flinkAPIHint("确认 TaskManager id 存在，并且 /taskmanagers/<id>/thread-dump 可读取")))
-		return 3
+		return writeFlinkAPIError(stderr, "确认 TaskManager id 存在，并且 /taskmanagers/<id>/thread-dump 可读取", err)
 	}
 	base, _ := flink.NormalizeBaseURL(rawURL)
 	summary := flink.SummarizeThreadDump(dump, st.maxThreads)
@@ -328,12 +330,11 @@ func runFlameGraph(ctx context.Context, rawURL string, st state, stdout, stderr 
 	if st.jobID == "" {
 		jobs, err := client.ListJobs(ctx)
 		if err != nil {
-			apperr.WriteJSON(stderr, apperr.New("FLINK_API_UNREACHABLE", err.Error(), flinkAPIHint("确认 URL 可访问，并且 /jobs/overview 可读取")))
-			return 3
+			return writeFlinkAPIError(stderr, "确认 URL 可访问，并且 /jobs/overview 可读取", err)
 		}
 		env := listJobsEnvelope{
 			SchemaVersion:   "v1",
-			Scenario:        "list-jobs",
+			Scenario:        "flamegraph-list-jobs",
 			UIURL:           base.String(),
 			ElapsedMs:       time.Since(start).Milliseconds(),
 			SourceEndpoints: []string{"/jobs/overview"},
@@ -352,8 +353,7 @@ func runFlameGraph(ctx context.Context, rawURL string, st state, stdout, stderr 
 	if st.vertexID == "" {
 		detail, err := client.GetJobDetail(ctx, st.jobID)
 		if err != nil {
-			apperr.WriteJSON(stderr, apperr.New("FLINK_API_UNREACHABLE", err.Error(), flinkAPIHint("确认 job id 存在，并且 /jobs/<jobid> 可读取")))
-			return 3
+			return writeFlinkAPIError(stderr, "确认 job id 存在，并且 /jobs/<jobid> 可读取", err)
 		}
 		env := flameGraphEnvelope{
 			SchemaVersion:   "v1",
@@ -385,10 +385,9 @@ func runFlameGraph(ctx context.Context, rawURL string, st state, stdout, stderr 
 		req.HasSubtaskIndex = true
 		subtaskIndex = &st.subtaskIndex
 	}
-	graph, err := client.GetFlameGraph(ctx, req)
+	graph, err := client.GetFlameGraphWaiting(ctx, req, st.flameGraphWait, 2*time.Second)
 	if err != nil {
-		apperr.WriteJSON(stderr, apperr.New("FLINK_API_UNREACHABLE", err.Error(), flinkAPIHint("确认 job/vertex 仍在运行、火焰图已启用，并且 /jobs/<jobid>/vertices/<vertexid>/flamegraph 可读取")))
-		return 3
+		return writeFlinkAPIError(stderr, "确认 job/vertex 仍在运行、火焰图已启用，并且 /jobs/<jobid>/vertices/<vertexid>/flamegraph 可读取", err)
 	}
 	sourceEndpoint := "/jobs/" + st.jobID + "/vertices/" + st.vertexID + "/flamegraph"
 	summary := flink.SummarizeFlameGraph(graph, st.topFrames)
@@ -403,11 +402,7 @@ func runFlameGraph(ctx context.Context, rawURL string, st state, stdout, stderr 
 		Type:            st.flameGraphType,
 		SubtaskIndex:    subtaskIndex,
 		Summary:         &summary,
-		NextActions: []string{
-			"优先看 summary.top_self_frames：按方法名聚合的自身耗时（self-time），share 最高的就是真正的热点方法（CPU 或阻塞）。不要只看 top_frames，那是累计耗时，最外层栈帧 share 接近 1 但没有定位价值。",
-			"ON_CPU 用于定位 CPU 热点；OFF_CPU 用于定位阻塞、IO 等待或锁等待；FULL 用于粗看整体。",
-			"需要原始火焰图树时重新执行：flink-cli flamegraph --include-raw --job-id <jobId> --vertex-id <vertexId> <url>。",
-		},
+		NextActions:     flameGraphNextActions(summary.TotalSamples),
 	}
 	if st.includeRaw {
 		env.FlameGraph = &graph
@@ -417,6 +412,20 @@ func runFlameGraph(ctx context.Context, rawURL string, st state, stdout, stderr 
 		return 1
 	}
 	return 0
+}
+
+func flameGraphNextActions(totalSamples int64) []string {
+	if totalSamples <= 0 {
+		return []string{
+			"total_samples=0 是 Flink 惰性采样的正常首次结果：等约 2-5 秒后用完全相同的命令再跑一次即可拿到数据（默认已内置等待，可用 --wait 调整）。",
+			"如果连续多次重试仍为 0，再确认该 vertex 当前有运行中的 subtask、集群已开启 rest.flamegraph.enabled。",
+		}
+	}
+	return []string{
+		"优先看 summary.top_self_frames：按方法名聚合的自身耗时（self-time），share 最高的就是真正的热点方法（CPU 或阻塞）。不要只看 top_frames，那是累计耗时，最外层栈帧 share 接近 1 但没有定位价值。",
+		"ON_CPU 用于定位 CPU 热点；OFF_CPU 用于定位阻塞、IO 等待或锁等待；FULL 用于粗看整体。",
+		"需要原始火焰图树时重新执行：flink-cli flamegraph --include-raw --job-id <jobId> --vertex-id <vertexId> <url>。",
+	}
 }
 
 func attachWarnings(env *envelope, warnings []string, quiet bool) {
@@ -434,13 +443,12 @@ func attachWarnings(env *envelope, warnings []string, quiet bool) {
 func runListJobs(ctx context.Context, client *flink.Client, rawURL string, start time.Time, stdout, stderr io.Writer) int {
 	jobs, err := client.ListJobs(ctx)
 	if err != nil {
-		apperr.WriteJSON(stderr, apperr.New("FLINK_API_UNREACHABLE", err.Error(), flinkAPIHint("确认 URL 可访问，并且 /jobs/overview 可读取")))
-		return 3
+		return writeFlinkAPIError(stderr, "确认 URL 可访问，并且 /jobs/overview 可读取", err)
 	}
 	base, _ := flink.NormalizeBaseURL(rawURL)
 	env := listJobsEnvelope{
 		SchemaVersion:   "v1",
-		Scenario:        "list-jobs",
+		Scenario:        "diagnose-list-jobs",
 		UIURL:           base.String(),
 		ElapsedMs:       time.Since(start).Milliseconds(),
 		SourceEndpoints: []string{"/jobs/overview"},
@@ -529,6 +537,31 @@ func normalizeErr(err error) error {
 		return nil
 	}
 	return apperr.New("FLAG_INVALID", err.Error(), "see `flink-cli --help`")
+}
+
+// writeFlinkAPIError classifies a REST client error into a stable code with
+// structured details so AI consumers can branch on `error.code` /
+// `error.details` instead of grep-ing the free-text message. Always returns
+// exit code 3 (REST API layer failure).
+func writeFlinkAPIError(stderr io.Writer, contextHint string, err error) int {
+	class := flink.ClassifyAPIError(err)
+	var hint string
+	switch class.Code {
+	case "TLS_CERT_ERROR":
+		hint = "内网 YARN/Flink 网关证书校验失败；重试加 --insecure-skip-verify。"
+	case "NON_JSON_HTML_RESPONSE":
+		hint = "当前 URL 返回 HTML 而非 Flink REST JSON；检查 YARN application/proxy 是否过期、跳到 attempts 页面或被登录页拦截，换成当前 application 的 Web UI URL 再试。"
+	case "NON_JSON_RESPONSE":
+		hint = "响应不是合法 JSON；确认 URL 指向 Flink 1.18 Web UI 根路径，且 gateway 把 REST path 正确代理到 Flink。"
+	case "HTTP_STATUS_ERROR":
+		hint = contextHint + "；REST 返回非 2xx，确认 job/vertex/TaskManager 仍存在且 application 未过期。"
+	case "FLINK_API_TIMEOUT":
+		hint = contextHint + "；请求超时，可增大 --timeout 或确认网关/集群负载。"
+	default:
+		hint = flinkAPIHint(contextHint)
+	}
+	apperr.WriteJSON(stderr, apperr.New(class.Code, err.Error(), hint).WithDetails(class.Details))
+	return 3
 }
 
 func flinkAPIHint(prefix string) string {

@@ -77,6 +77,7 @@ stdout 输出 JSON envelope：
   "source_endpoints": ["/jobs/overview"],
   "warnings": [],
   "summary": {
+    "kind": "diagnose",
     "critical": 0,
     "warn": 1,
     "ok": 0,
@@ -96,19 +97,25 @@ stdout 输出 JSON envelope：
 
 大作业默认每个 job 最多对 20 个 vertex 请求 backpressure，避免 REST 调用过多和输出过大；需要全量时使用 `--max-vertices 0`。
 
-stderr 输出 JSON error：
+stderr 输出结构化 JSON error，带 `schema_version` 和可选 `details`：
 
 ```json
-{"error":{"code":"URL_INVALID","message":"...","hint":"..."}}
+{"error":{"schema_version":"v1","code":"TLS_CERT_ERROR","message":"...","hint":"...","details":{"retriable_flags":["--insecure-skip-verify"]}}}
 ```
 
-退出码：
+error code 已细分，AI 应据 `error.code` 分支决策，不要 grep message：
 
-- `0`：成功。
-- `1`：内部错误或输出错误。
-- `2`：用户输入错误，例如 URL 不合法。
-- `3`：Flink REST API 不可达或 `/jobs/overview` 拉取失败。
-- 如果错误提示 `returned non-JSON response` 或 `got HTML`，通常是 YARN application/proxy 已过期、URL 指错到登录页/错误页，或 gateway 没有把 REST path 代理到 Flink Web UI。不要继续按 Flink 指标诊断，要先让用户换当前 application 的 Web UI URL。
+- `URL_INVALID`：URL 不合法（退出码 2）。
+- `JOB_NOT_FOUND`：job id 不存在（退出码 2）；`details.available_job_ids` 给出可选 job id，直接从里面挑，不用再跑一次命令。
+- `TLS_CERT_ERROR`：证书校验失败（退出码 3）；`details.retriable_flags` 提示重试加 `--insecure-skip-verify`。
+- `NON_JSON_HTML_RESPONSE`：拿到 HTML 而非 JSON（退出码 3）；`details.likely_cause=yarn_proxy_expired_or_login_page`。YARN proxy 过期/登录页，即使是非 200 也会归到这里。要先让用户换当前 application 的 Web UI URL，不要继续按 Flink 指标诊断。
+- `NON_JSON_RESPONSE`：响应不是合法 JSON（退出码 3）。
+- `HTTP_STATUS_ERROR`：REST 返回非 2xx 且 body 不是 HTML（退出码 3）；`details.http_status` 给出状态码。
+- `FLINK_API_TIMEOUT`：请求超时（退出码 3），可增大 `--timeout`。
+- `FLINK_API_UNREACHABLE`：其它连接失败（退出码 3）。
+- `OUTPUT_ERROR` / `FLAG_INVALID` / `INTERNAL`：退出码 1。
+
+退出码：`0` 成功；`1` 内部/输出/flag 错误；`2` 用户输入错误；`3` REST API 层失败。AI 不要只看退出码，要解析 stderr JSON 的 `error.code` 和 `error.details`。
 
 ## 诊断规则
 
@@ -123,6 +130,7 @@ stderr 输出 JSON error：
 - `checkpoint_slow`：最近成功 checkpoint end-to-end duration 超过 60 秒。
 - `vertex_failed`：vertex 处于 failed/canceled/canceling。
 - `backpressure_high`：vertex backpressure level 为 high。
+- `backpressure_chain`：反压沿链路传导分析。当上游多个 vertex 反压（含至少一个 high）并在某个 vertex 终止（它自身不再被下游反压），把该终止点判定为瓶颈 vertex。`evidence.bottleneck_vertex_id/bottleneck_vertex_name` 直接给出瓶颈算子，`evidence.upstream_chain` 给出整条反压链，`evidence.interpretation.next_focus` 提示优先对该 vertex 做 flamegraph ON_CPU。AI 不用再逐个 vertex 手工查 backpressure 找瓶颈。
 - `sink_busy_upstream_backpressure`：sink 自身 backpressure 可能是 ok，但 sink busy 较高且上游 vertex 已累计反压。这个规则用于 Doris Writer 这类场景，避免 agent 被 “Writer backpressure=ok” 误导；应继续检查外部系统吞吐、sink flush/load/commit 指标、批次大小、checkpoint 周期和 sink 并发。
   - 如果命中 Doris Writer，`finding.evidence.doris_sink_metrics.summary` 会包含采样 subtask 的 `per_flush_rows_mean`、`per_flush_bytes_mean`、`per_flush_mib_mean`、`per_flush_gib_mean`、`load_time_ms_mean/max`、`load_time_sec_mean/max`、`write_data_time_ms_mean/max`、`write_data_time_sec_mean/max`、`write_data_share_of_load`、`load_mib_per_sec_per_subtask`、`begin_txn_time_ms_mean`、`commit_and_publish_time_ms_mean`、`commit_and_publish_time_sec_mean`。这些均值类字段按 3 位小数输出，避免大作业诊断时出现难读的长小数。
   - 同一个 finding 会尽量带 `finding.evidence.checkpoint_summary`，包含 checkpoint counts、最近成功耗时、历史 avg/max duration、state size 和 alignment buffered。用它先排除 checkpoint 对齐/状态过大问题，不要再手写脚本单独拉 `/checkpoints`。
@@ -145,7 +153,12 @@ stderr 输出 JSON error：
 - `summary.top_self_frames` 是按方法名聚合的自身耗时（self-time = 节点 value 减去子节点 value 之和），`top_self_frames[0]` 直接对应真正的热点方法（CPU 或阻塞）。这是定位瓶颈的首选视图。
 - `summary.top_frames` 是累计耗时，最外层栈帧（`Thread.run`、`Task.doRun`）share 会接近 1 但没有定位价值，只作辅助，不要用它排序热点。之前 agent 因为只看 top_frames 拿到一堆 share≈1 的包装帧，被迫放弃 CLI 手写 curl+递归解析原始树才算出 self-time；现在工具直接给出 top_self_frames，不应再手工解析。
 - `--type ON_CPU` 用于 CPU 热点，`--type OFF_CPU` 用于阻塞/IO/锁等待，`--type FULL` 用于粗看整体。
+- Flink 火焰图是惰性采样：第一次请求只触发采样并返回 `total_samples=0`。CLI 已内置等待重试（`GetFlameGraphWaiting`，默认 `--wait 8s`、每 2 秒轮询一次），AI 一次调用通常就能拿到非空采样，不用再自己写重试循环。`--wait 0` 关闭等待。
+- 如果 `total_samples=0`，`summary.interpretation` 和 `next_actions` 会明确说明这是惰性采样的正常首次结果、请重试；不要当成错误或放弃。
 - 用户明确需要原始树时才使用 `--include-raw`。
+- 所有命令的顶层 `summary` 带 `kind` 判别字段（`diagnose`/`thread_dump`/`flamegraph`），AI 可据此确认 summary 形状。
+- 计数字段（`tasks`、checkpoint counts）不再省略 0：`failed:0` 会显式出现，表示"0 失败"这一健康信号，区别于"未采集到"。
+- 透传字段统一 snake_case：backpressure 只输出 `backpressure_level`（不再同时出现 `backpressure-level`/`backpressureLevel`），线程是 `thread_name`/`stringified_thread_info`，TaskManager 是 `data_port`/`slots_number` 等。
 
 ## 开发约定
 
